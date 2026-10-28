@@ -1,0 +1,23 @@
+# docker compose up -d --build, then open http://localhost:4317
+services:
+  cat-agents:
+    build: .
+    image: standahorvath/cat-agents:latest
+    container_name: cat-agents
+    restart: unless-stopped
+    ports:
+      # Only reachable from this computer.
+      - "127.0.0.1:${PORT:-4317}:4317"
+    volumes:
+      # Claude Code state, read-only: the cats only watch, never touch.
+      - ${CLAUDE_HOME:-${HOME}/.claude}:/claude:ro
+      # Except settings.json, where the server adds its hooks (live events, "waiting for you").
+      - ${CLAUDE_HOME:-${HOME}/.claude}/settings.json:/claude/settings.json
+      # Coins and furniture (same save as running natively from this folder).
+      - ./data:/app/data
+    environment:
+      CLAUDE_STALE_HOURS: ${CLAUDE_STALE_HOURS:-48}
+      # Hooks run on the host, so they call the published port.
+      HOOK_URL: http://127.0.0.1:${PORT:-4317}/api/hook
+      WEATHER_LAT: ${WEATHER_LAT:-50.0755}
+      WEATHER_LON: ${WEATHER_LON:-14.4378}

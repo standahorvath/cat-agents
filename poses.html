@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Kočičí pózy</title>
+    <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&display=swap" rel="stylesheet" />
+    <style>
+      html, body { margin: 0; height: 100%; background: #1a1626; color: #f2e6c9; font-family: 'Pixelify Sans', monospace; }
+      canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+      #labels { position: fixed; inset: 0; pointer-events: none; font-size: 13px; }
+      #labels span { position: absolute; transform: translate(-50%, 0); text-shadow: 0 1px 0 #000; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="labels"></div>
+    <script type="module" src="/src/dev/posesPreview.js"></script>
+  </body>
+</html>
