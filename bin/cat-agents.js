@@ -8,11 +8,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-const HELP = `Cat Office: live visualization of Claude Code agents
+const HELP = `Cat Office: live visualization of Claude Code and Codex agents
 
 Usage:
   npx cat-agents [options]      start the office at http://127.0.0.1:4317
-  npx cat-agents remove-hooks   remove the hooks from ~/.claude/settings.json
+  npx cat-agents remove-hooks   remove Claude and Codex hooks
+  npx cat-agents install-codex-hooks  install hooks into ~/.codex/hooks.json
+  npx cat-agents remove-codex-hooks   remove hooks from ~/.codex/hooks.json
 
 Options:
   -p, --port <port>   server port (default 4317, env PORT)
@@ -58,6 +60,15 @@ const [command] = positionals;
 if (command === 'remove-hooks') {
   const { removeHooks } = await import('../server/hooks.js');
   console.log(removeHooks());
+  const { editHooks } = await import('../server/codex/hook-install.js');
+  const result = editHooks({ action: 'remove' });
+  console.log(result.changed ? `Codex hooks removed from ${result.target}` : 'No Codex hooks found');
+  process.exit(0);
+}
+if (command === 'install-codex-hooks' || command === 'remove-codex-hooks') {
+  const { editHooks } = await import('../server/codex/hook-install.js');
+  const result = editHooks({ action: command === 'install-codex-hooks' ? 'install' : 'remove' });
+  console.log(result.changed ? `Updated ${result.target}` : 'No change');
   process.exit(0);
 }
 if (command) {

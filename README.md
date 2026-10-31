@@ -1,6 +1,6 @@
 # Cat Office
 
-A live visualization of locally running Claude Code agents as an isometric 3D office in a retro pixel style. Every session is a voxel cat, subagents are kittens. What a cat does matches what its agent is doing right now.
+A live visualization of locally running Claude Code and Codex agents as an isometric 3D office in a retro pixel style. Every session is a voxel cat, subagents are kittens. What a cat does matches what its agent is doing right now.
 
 ![Cat Office with cats working at their desks](docs/screenshot.png)
 
@@ -13,7 +13,9 @@ All you need is Node.js 20 or newer, no need to clone the repository:
 ```sh
 npx cat-agents               # office at http://127.0.0.1:4317, opens in the browser by itself
 npx cat-agents@latest        # always the latest version
-npx cat-agents remove-hooks  # removes the hooks from ~/.claude/settings.json
+npx cat-agents remove-hooks  # removes Claude and Codex hooks
+npx cat-agents install-codex-hooks  # installs Codex hooks without starting the office
+npx cat-agents remove-codex-hooks   # removes only Codex hooks
 ```
 
 Options: `--port <port>`, `--host <host>`, `--data <dir>` (coins, furniture and cats, default `~/.cat-agents`), `--no-hooks` (don't install hooks), `--no-open` (don't open the browser), `--help`. The environment variables listed below work too.
@@ -129,7 +131,7 @@ Every project has its own cat: name, fur, level, needs and clothes persist acros
 
 - **Levels** grow with time worked (5 min to level 2, 20 min to level 3, 45 min to level 4…).
 - **Needs**: food, energy and fun. Work drains them (after 10 minutes of work food is around 50 %, energy around 35 %), slacking off lowers food and fun. They're only refilled by what the cat actually does: eating from a bowl, sleeping in a bed, playing with toys (the browser reports this to the server). When nobody is watching the page, the server refills idle cats itself based on the office's furniture. A happy cat earns up to 1.5×, an unhappy one only half. A hungry cat goes to eat first, a tired one goes to sleep.
-- **Context = weight**: the fuller the agent's context, the chubbier the cat and the slower it walks (the card has a Kontext (Context) row). When the context is compacted or the agent runs `/clear`, the cat shakes itself, fur in its colour falls off and it slims down. The window size is 1M tokens; set the `CLAUDE_CONTEXT_WINDOW` variable otherwise. The cat belongs to the Claude process, so it stays the same after `/clear`.
+- **Context = weight**: the fuller the agent's context, the chubbier the cat and the slower it walks (the card has a Kontext (Context) row). When the context is compacted or the agent runs `/clear`, it slims down. Codex CLI uses the model's reported context window; Claude Code defaults to 1M tokens (set `CLAUDE_CONTEXT_WINDOW` to override it). The cat belongs to the Claude process, so it stays the same after `/clear`.
 - **Petting**: on the cat's card you can pet it (refills fun), give it a treat for 10 coins (refills food) or shine a laser for it while it's slacking off.
 - **Personalities**: depending on the project, every cat has one of 8 personalities (easygoing, grump, gossip, gamer, cuddler, troublemaker, dandy/diva, nerd). The personality decides what the cat likes to do (the troublemaker knocks mugs off tables and pulls others' tails, the nerd explains code to a rubber duck, the gamer wins at chess) and how it talks.
 - **Relationships** (−100 to 100): every pair has its own natural chemistry based on personalities and a bit of chance, so some cats simply don't get along. Shared moments bring them closer or drive them apart, but the closer to ±100, the less each further moment counts, and relationships drift back towards chemistry over hours (they keep changing and never freeze at the maximum). Cats with bad chemistry take nice things with a grain of salt and take nasty ones to heart. Friends have their specialities (secret greeting, hunting together, synchronised dance, inside jokes, whispering, stargazing together, zoomies together), so do rivals (insult rap battle, box war, code review, race to the bowl, tail pulling, keyboard sabotage, knocked-over mug, passive-aggressive note) and petty grievances arise between anyone (a taken bed, stolen kibble, waking someone up, finding someone to blame). When its best friend cuddles with someone else, a cat gets jealous; rivals sometimes make up with a gift. Old saved relationships (version 0.4 and older, which only ever grew) are reset to chemistry once.
@@ -190,6 +192,27 @@ Windows and light follow the real time of day, the clock on the wall shows the r
 Code: `server/` reads the state from `~/.claude`, `src/scene/` is the game: `World.js` (renderer, camera, sync), `Office.js` (room, furniture, spots, dynamic objects), `CatModel.js` + `poses.js` (voxel cat and poses), `activities.js` + `Agent.js` (behaviour, movement, lines), `interactions.js` (interactions between cats), `events.js` (random events), `pixelPipeline.js` (low resolution, dithering, outlines), `overlay.js` (name tags, speech bubbles, captions).
 
 ## Where the data comes from
+
+### Codex CLI
+
+On macOS, Cat Office starts its bundled Codex adapter and installs observational
+hooks into `~/.codex/hooks.json` at startup. Open `/hooks` in Codex CLI to trust
+the new definitions. Codex CLI sessions are displayed when their hooks run;
+each session disappears on its `SessionEnd` hook or when its hosting process ends. Hook events
+sent to the adapter exclude prompt text, tool input, and tool output. The hook
+reads the latest numeric token usage from the CLI transcript and sends only the
+input-token count and model context window. Transcript format is not a stable
+Codex hook API, so context can be unavailable until the next usage record. The adapter
+uses a local Unix socket under the Cat Office data directory. Use
+`CAT_AGENTS_CODEX=off` to disable it, or
+`CAT_AGENTS_HOOKS=off` to skip hook installation. `remove-hooks` removes both
+Claude and Codex hooks.
+
+The bundled adapter scans macOS processes, so Codex sessions are not collected
+when Cat Office runs inside the Linux Docker image. The optional
+`PUT /api/external-sources/codex/sessions` endpoint remains available for
+external adapters; it requires `CAT_AGENTS_EXTERNAL_TOKEN` and loopback access.
+See the [snapshot protocol](docs/codex-adapter.md).
 
 Every second the server reads `~/.claude` (or `$CLAUDE_CONFIG_DIR`) and sends changes over SSE to `/api/events`:
 
