@@ -1,11 +1,15 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { snapshot } from './claude-state.js';
 import { handleHook, installHooks } from './hooks.js';
 import { act, earn, publicState } from './office-store.js';
 import { weather } from './weather.js';
+import { ExternalSessions, validateCodexSnapshot } from './external-sessions.js';
+import { Adapter } from './codex/receiver.js';
+import { editHooks as editCodexHooks } from './codex/hook-install.js';
 
 const PORT = Number(process.env.PORT) || 4317;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -22,6 +26,8 @@ const MIME = {
 };
 
 const clients = new Set();
+const external = new ExternalSessions();
+let localCodexSessions = [];
 let latest = JSON.stringify({ sessions: [], office: publicState() });
 let sessions = [];
 
@@ -33,8 +39,10 @@ function broadcast(data) {
 function tick(seconds = POLL_MS / 1000) {
   let data;
   try {
-    sessions = snapshot().sessions;
-    if (seconds) earn(sessions, seconds, clients.size > 0);
+    const codexSessions = new Map(external.current().map(session => [session.id, session]));
+    for (const session of localCodexSessions) codexSessions.set(session.id, session);
+    sessions = [...snapshot().sessions, ...codexSessions.values()];
+    earn(sessions, seconds, clients.size > 0);
     data = JSON.stringify({ sessions, office: publicState() });
   } catch (err) {
     console.error('snapshot failed:', err);
@@ -55,6 +63,47 @@ function readBody(req) {
       }
     });
   });
+}
+
+function jsonError(res, status, error) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error }));
+}
+
+function loopback(address) {
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+}
+
+function authorized(req) {
+  const token = process.env.CAT_AGENTS_EXTERNAL_TOKEN;
+  const supplied = req.headers.authorization;
+  if (!token || typeof supplied !== 'string' || !supplied.startsWith('Bearer ')) return false;
+  const a = Buffer.from(supplied.slice(7));
+  const b = Buffer.from(token);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+async function handleExternalSnapshot(req, res) {
+  if (!loopback(req.socket.remoteAddress)) return jsonError(res, 403, 'Loopback only');
+  if (!process.env.CAT_AGENTS_EXTERNAL_TOKEN) return jsonError(res, 503, 'External source disabled');
+  if (!authorized(req)) return jsonError(res, 401, 'Unauthorized');
+  let bytes = 0;
+  const chunks = [];
+  try {
+    for await (const chunk of req) {
+      bytes += chunk.length;
+      if (bytes > 256 * 1024) return jsonError(res, 413, 'Snapshot too large');
+      chunks.push(chunk);
+    }
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const result = validateCodexSnapshot(body);
+    if (!result.ok) return jsonError(res, 400, result.error);
+    external.replace(result.sessions);
+    tick(0);
+    res.writeHead(204).end();
+  } catch {
+    if (!res.writableEnded) jsonError(res, 400, 'Invalid JSON');
+  }
 }
 
 async function handleOffice(req, res, action) {
@@ -82,6 +131,11 @@ function serveStatic(req, res) {
 }
 
 export const server = http.createServer((req, res) => {
+  if (req.url === '/api/external-sources/codex/sessions') {
+    if (req.method !== 'PUT') return jsonError(res, 405, 'Method not allowed');
+    handleExternalSnapshot(req, res);
+    return;
+  }
   if (req.url === '/api/events') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -135,5 +189,26 @@ server.listen(PORT, HOST, () => {
     } catch (err) {
       console.error('failed to install hooks:', err.message);
     }
+  }
+  if (process.platform === 'darwin' && process.env.CAT_AGENTS_CODEX !== 'off') {
+    const adapter = new Adapter({
+      token: 'in-process',
+      heartbeatMs: null,
+      publish: async codexSessions => {
+        localCodexSessions = codexSessions;
+        tick(0);
+      },
+    });
+    adapter.start().then(() => {
+      if (process.env.CAT_AGENTS_HOOKS !== 'off') {
+        try {
+          const result = editCodexHooks({ action: 'install' });
+          if (result.changed) console.log(`Codex hooks installed into ${result.target}`);
+        } catch (error) {
+          console.error('failed to install Codex hooks:', error.message);
+        }
+      }
+    }).catch(error => console.error('Codex adapter:', error.message));
+    server.on('close', () => adapter.stop().catch(error => console.error('Codex adapter:', error.message)));
   }
 });
