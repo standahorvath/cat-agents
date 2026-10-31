@@ -193,6 +193,7 @@ server.listen(PORT, HOST, () => {
   if (process.platform === 'darwin' && process.env.CAT_AGENTS_CODEX !== 'off') {
     const adapter = new Adapter({
       token: 'in-process',
+      heartbeatMs: null,
       publish: async codexSessions => {
         localCodexSessions = codexSessions;
         tick(0);

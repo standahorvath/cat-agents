@@ -55,8 +55,6 @@ function updateContext(session, context, at) {
   return true;
 }
 
-// --- session lifecycle ------------------------------------------------------
-
 export class SessionStateMachine {
   constructor() {
     this.processId = null;
@@ -170,7 +168,6 @@ export class SessionStateMachine {
     const priority = PRIORITY[kind];
     if (!positionAfter(at, priority, session)) return resultAdded;
 
-    // A delayed prompt cannot overwrite tool activity from the same turn.
     if (kind === 'UserPromptSubmit' && session.lastAt !== -Infinity) return false;
 
     if (kind === 'PostToolUse') {

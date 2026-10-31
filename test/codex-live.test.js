@@ -10,6 +10,30 @@ import { parseProcesses, codexProcesses } from '../server/codex/codex-process.js
 import { processAncestry } from '../server/codex/process-ancestry.js';
 import { Adapter } from '../server/codex/receiver.js';
 
+test('in-process adapter skips heartbeat while external adapter keeps it', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cat-adapter-'));
+  try {
+    for (const [heartbeatMs, expectedTimer] of [[null, false], [5000, true]]) {
+      const sent = [];
+      const adapter = new Adapter({
+        socketPath: path.join(dir, `adapter-${expectedTimer}.sock`),
+        processFinder: async () => [],
+        publish: async sessions => { sent.push(sessions); },
+        token: 'test', processPollMs: 60_000, heartbeatMs,
+      });
+      try {
+        await adapter.start();
+        assert.equal(Boolean(adapter.heartbeatTimer), expectedTimer);
+        assert.deepEqual(sent, [[]]);
+      } finally {
+        await adapter.stop();
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('hook strips content but preserves event identity and input correlation', () => {
   const event = sanitizeHookEvent({
     hook_event_name: 'PermissionRequest', session_id: 'thr_a', turn_id: 'turn_a',

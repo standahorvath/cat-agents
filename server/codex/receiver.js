@@ -138,7 +138,9 @@ export class Adapter {
     this.pollTimer = setInterval(() => {
       this.refreshProcess().catch(error => console.error('Process scan:', error.message));
     }, this.processPollMs);
-    this.heartbeatTimer = setInterval(() => this.requestPublish(), this.heartbeatMs);
+    if (this.heartbeatMs > 0) {
+      this.heartbeatTimer = setInterval(() => this.requestPublish(), this.heartbeatMs);
+    }
     console.log(`Codex adapter listening on ${this.socketPath}`);
   }
 
