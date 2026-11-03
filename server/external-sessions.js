@@ -16,12 +16,13 @@ export function validateCodexSnapshot(body) {
   const sessions = [];
   for (const input of body.sessions) {
     if (!plain(input) || !keysOnly(input, [
-      'id', 'source', 'name', 'cwd', 'project', 'status', 'statusSince', 'startedAt', 'activity', 'context', 'results', 'subagents',
+      'id', 'source', 'name', 'cwd', 'project', 'status', 'statusSince', 'startedAt', 'activity', 'context', 'results', 'compacts', 'subagents',
     ]) || !text(input.id, 200) || !/^codex:[A-Za-z0-9_-]+$/.test(input.id) || ids.has(input.id) ||
         input.source !== 'codex' || !text(input.name) || !text(input.cwd, 4096) ||
         !text(input.project) || !['busy', 'waiting', 'idle'].includes(input.status) ||
         !timestamp(input.statusSince) || !timestamp(input.startedAt) ||
         (input.results !== undefined && (!Array.isArray(input.results) || input.results.length > 6)) ||
+        (input.compacts !== undefined && (!Array.isArray(input.compacts) || input.compacts.length > 3)) ||
         !Array.isArray(input.subagents) || input.subagents.length !== 0) {
       return { ok: false, error: 'Invalid session' };
     }
@@ -31,11 +32,21 @@ export function validateCodexSnapshot(body) {
     for (const item of input.results ?? []) {
       if (!plain(item) || !keysOnly(item, ['id', 'kind', 'ts']) ||
           !text(item.id, 300) || !item.id.startsWith(`${input.id}:`) || resultIds.has(item.id) ||
-          item.kind !== 'commit' || !timestamp(item.ts)) {
+          !['commit', 'push', 'merge', 'testsPass', 'testsFail'].includes(item.kind) || !timestamp(item.ts)) {
         return { ok: false, error: 'Invalid result' };
       }
       resultIds.add(item.id);
       results.push({ id: item.id, kind: item.kind, ts: item.ts });
+    }
+    const compacts = [];
+    const compactIds = new Set();
+    for (const item of input.compacts ?? []) {
+      if (!plain(item) || !keysOnly(item, ['id', 'ts', 'before', 'after', 'trigger']) ||
+          !text(item.id, 300) || !item.id.startsWith(`${input.id}:compact:`) || compactIds.has(item.id) ||
+          !timestamp(item.ts) || !timestamp(item.before) || !timestamp(item.after) ||
+          item.trigger !== 'auto') return { ok: false, error: 'Invalid compaction' };
+      compactIds.add(item.id);
+      compacts.push({ id: item.id, ts: item.ts, before: item.before, after: item.after, trigger: item.trigger });
     }
     let activity = null;
     if (input.activity !== null) {
@@ -62,7 +73,7 @@ export function validateCodexSnapshot(body) {
     sessions.push({
       id: input.id, source: 'codex', name: input.name, cwd: input.cwd,
       project: input.project, status: input.status, statusSince: input.statusSince,
-      startedAt: input.startedAt, activity, context, results, subagents: [],
+      startedAt: input.startedAt, activity, context, results, compacts, subagents: [],
     });
   }
   return { ok: true, sessions };

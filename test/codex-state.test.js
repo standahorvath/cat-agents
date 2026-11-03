@@ -91,6 +91,30 @@ test('successful Codex commit is retained as one result in the session snapshot'
   assert.equal(only(machine).results.length, 2);
 });
 
+test('Codex test outcomes are retained once in the session snapshot', () => {
+  const machine = new SessionStateMachine();
+  machine.setProcess(A);
+  apply(machine, event('PreToolUse', 'turn_1', { tool_name: 'Bash', tool_use_id: 'test_1' }), at(1));
+  const failed = event('PostToolUse', 'turn_1', { tool_name: 'Bash', tool_use_id: 'test_1', result_kind: 'testsFail' });
+  assert.equal(apply(machine, failed, at(2)), true);
+  assert.equal(apply(machine, failed, at(2)), false);
+  apply(machine, event('PreToolUse', 'turn_1', { tool_name: 'functions.exec', tool_use_id: 'test_2' }), at(3));
+  apply(machine, event('PostToolUse', 'turn_1', { tool_name: 'functions.exec', tool_use_id: 'test_2', result_kind: 'testsPass' }), at(4));
+  assert.deepEqual(only(machine).results.map(result => result.kind), ['testsFail', 'testsPass']);
+});
+
+test('Codex push and merge results are retained once', () => {
+  const machine = new SessionStateMachine();
+  machine.setProcess(A);
+  apply(machine, event('PreToolUse', 'turn_1', { tool_name: 'exec_command', tool_use_id: 'push_1' }), at(1));
+  const pushed = event('PostToolUse', 'turn_1', { tool_name: 'exec_command', tool_use_id: 'push_1', result_kind: 'push' });
+  assert.equal(apply(machine, pushed, at(2)), true);
+  assert.equal(apply(machine, pushed, at(2)), false);
+  apply(machine, event('PreToolUse', 'turn_1', { tool_name: 'Bash', tool_use_id: 'merge_1' }), at(3));
+  apply(machine, event('PostToolUse', 'turn_1', { tool_name: 'Bash', tool_use_id: 'merge_1', result_kind: 'merge' }), at(4));
+  assert.deepEqual(only(machine).results.map(result => result.kind), ['push', 'merge']);
+});
+
 test('CLI context tracks the latest input usage and shrinks after compaction', () => {
   const machine = new SessionStateMachine();
   machine.setProcess(A);
@@ -101,6 +125,10 @@ test('CLI context tracks the latest input usage and shrinks after compaction', (
   assert.ok(only(machine).context.fill > 0.75);
   apply(machine, event('SessionStart', 'turn_2', { source: 'compact', context: { tokens: 20000, window: 258400 } }), at(3));
   assert.ok(only(machine).context.fill < 0.1);
+  assert.deepEqual(only(machine).compacts, [{ id: `codex:thr_alpha:compact:${Date.parse(at(3))}`,
+    ts: Date.parse(at(3)), before: 200000, after: 20000, trigger: 'auto' }]);
+  assert.equal(apply(machine, event('SessionStart', 'turn_2', { source: 'compact', context: { tokens: 20000, window: 258400 } }), at(3)), false);
+  assert.equal(only(machine).compacts.length, 1);
 });
 
 test('a late SessionStart cannot replace context from a newer hook', () => {

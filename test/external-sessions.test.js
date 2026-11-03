@@ -8,6 +8,7 @@ const session = {
   activity: { name: 'Bash', category: 'shell', detail: 'Bash', ts: 1000 },
   context: null,
   results: [],
+  compacts: [],
   subagents: [],
 };
 
@@ -29,7 +30,8 @@ test('rejects malformed and content-bearing snapshots', () => {
     { schemaVersion: 1, sessions: [{ ...session, subagents: [{}] }] },
     { schemaVersion: 1, sessions: [{ ...session, context: { tokens: 90, window: 100, fill: 0.5 } }] },
     { schemaVersion: 1, sessions: [{ ...session, context: { tokens: 90, window: 0, fill: 1 } }] },
-    { schemaVersion: 1, sessions: [{ ...session, results: [{ id: 'codex:thr_123:x', kind: 'push', ts: 1000 }] }] },
+    { schemaVersion: 1, sessions: [{ ...session, results: [{ id: 'codex:thr_123:x', kind: 'unknown', ts: 1000 }] }] },
+    { schemaVersion: 1, sessions: [{ ...session, compacts: [{ id: 'codex:thr_123:compact:1', ts: 1, before: 10, after: 2, trigger: 'manual', prompt: 'private' }] }] },
   ]) {
     assert.equal(validateCodexSnapshot(body).ok, false);
   }
@@ -40,9 +42,20 @@ test('accepts numerical CLI context without transcript content', () => {
   assert.deepEqual(validateCodexSnapshot({ schemaVersion: 1, sessions: [{ ...session, context }] }).sessions[0].context, context);
 });
 
-test('accepts sanitized commit results for achievement counting', () => {
-  const results = [{ id: 'codex:thr_123:tool_1', kind: 'commit', ts: 1000 }];
+test('accepts sanitized commit, push, merge and test results for achievement counting', () => {
+  const results = [
+    { id: 'codex:thr_123:tool_1', kind: 'commit', ts: 1000 },
+    { id: 'codex:thr_123:tool_2', kind: 'testsPass', ts: 1001 },
+    { id: 'codex:thr_123:tool_3', kind: 'testsFail', ts: 1002 },
+    { id: 'codex:thr_123:tool_4', kind: 'push', ts: 1003 },
+    { id: 'codex:thr_123:tool_5', kind: 'merge', ts: 1004 },
+  ];
   assert.deepEqual(validateCodexSnapshot({ schemaVersion: 1, sessions: [{ ...session, results }] }).sessions[0].results, results);
+});
+
+test('accepts sanitized compaction metadata', () => {
+  const compacts = [{ id: 'codex:thr_123:compact:1001', ts: 1001, before: 900, after: 100, trigger: 'auto' }];
+  assert.deepEqual(validateCodexSnapshot({ schemaVersion: 1, sessions: [{ ...session, compacts }] }).sessions[0].compacts, compacts);
 });
 
 test('external snapshot expires after missed heartbeats and can be cleared immediately', () => {

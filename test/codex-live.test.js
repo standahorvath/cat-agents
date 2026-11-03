@@ -95,6 +95,39 @@ test('hook reports only a confirmed successful commit', () => {
   assert.equal(sanitizeHookEvent({ ...wrapped, tool_response: { output: [{ text: 'Script completed\nOutput:\nnothing to commit' }] } }).result_kind, undefined);
 });
 
+test('hook reports test outcomes without retaining commands or output', () => {
+  const base = { hook_event_name: 'PostToolUse', session_id: 'thr_a', turn_id: 'turn_a',
+    tool_name: 'Bash', tool_use_id: 'tool_1', tool_input: { command: 'npm test -- secret' } };
+  const result = response => sanitizeHookEvent({ ...base, tool_response: response });
+  assert.equal(result({ exit_code: 0, output: '12 passed' }).result_kind, 'testsPass');
+  assert.equal(result({ exit_code: 1, output: '1 failed' }).result_kind, 'testsFail');
+  assert.equal(result({ exit_code: 0, output: '1 failed' }).result_kind, 'testsFail');
+  assert.equal(result({ output: 'still running' }).result_kind, undefined);
+  assert.equal(JSON.stringify(result({ exit_code: 0, output: 'PRIVATE 12 passed' })).includes('PRIVATE'), false);
+  assert.equal(sanitizeHookEvent({ ...base, tool_input: { command: 'echo hello' },
+    tool_response: { exit_code: 0 } }).result_kind, undefined);
+  assert.equal(sanitizeHookEvent({ ...base, tool_input: { command: './gradlew :module:test' },
+    tool_response: { exit_code: 0 } }).result_kind, 'testsPass');
+  assert.equal(sanitizeHookEvent({ ...base, tool_name: 'functions.exec',
+    tool_input: { code: 'const r=await tools.exec_command({cmd:"npm test"});text(r.output)' },
+    tool_response: { output: [{ text: 'Script completed\nOutput:\n12 passed' }] } }).result_kind, 'testsPass');
+});
+
+test('hook reports only confirmed successful push and merge commands', () => {
+  const base = { hook_event_name: 'PostToolUse', session_id: 'thr_a', turn_id: 'turn_a',
+    tool_name: 'exec_command', tool_use_id: 'tool_1' };
+  const result = (cmd, response) => sanitizeHookEvent({ ...base, tool_input: { cmd }, tool_response: response });
+  assert.equal(result('git push origin main', { exit_code: 0, output: 'PRIVATE' }).result_kind, 'push');
+  assert.equal(result('git -C repo merge feature', { exit_code: 0, output: 'Already up to date.' }).result_kind, 'merge');
+  assert.equal(result('gh pr merge 42 --squash', { exit_code: 0 }).result_kind, 'merge');
+  assert.equal(result('git push origin main', { exit_code: 1, output: 'rejected' }).result_kind, undefined);
+  assert.equal(result('git push --dry-run', { exit_code: 0 }).result_kind, undefined);
+  assert.equal(result('git merge --abort', { exit_code: 0 }).result_kind, undefined);
+  assert.equal(result('echo git push', { exit_code: 0 }).result_kind, undefined);
+  assert.equal(result('git push', { output: 'still running' }).result_kind, undefined);
+  assert.equal(JSON.stringify(result('git push origin main', { exit_code: 0, output: 'PRIVATE' })).includes('PRIVATE'), false);
+});
+
 test('hook installation preserves other hooks and is idempotent', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cat-hooks-'));
   try {

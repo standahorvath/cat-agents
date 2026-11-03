@@ -34,12 +34,13 @@ function positionAfter(at, priority, session) {
 }
 
 function recordResult(session, event, at) {
-  if (event.result_kind !== 'commit' || !['Bash', 'exec', 'functions.exec'].includes(event.tool_name) ||
+  if (!['commit', 'push', 'merge', 'testsPass', 'testsFail'].includes(event.result_kind) ||
+      !['Bash', 'exec_command', 'exec', 'functions.exec'].includes(event.tool_name) ||
       !event.tool_use_id) return false;
   const id = `${session.id}:${event.tool_use_id}`;
   if (session.seenResultIds.has(id)) return false;
   session.seenResultIds.add(id);
-  session.results.push({ id, kind: 'commit', ts: at });
+  session.results.push({ id, kind: event.result_kind, ts: at });
   if (session.results.length > 6) session.results.shift();
   return true;
 }
@@ -47,6 +48,8 @@ function recordResult(session, event, at) {
 function updateContext(session, context, at) {
   if (!context || !Number.isSafeInteger(context.tokens) || context.tokens < 0 ||
       !Number.isSafeInteger(context.window) || context.window <= 0 || at < session.contextAt) return false;
+  if (at === session.contextAt && session.context?.tokens === context.tokens &&
+      session.context?.window === context.window) return false;
   session.context = {
     tokens: context.tokens, window: context.window,
     fill: Math.min(1, context.tokens / context.window),
@@ -130,6 +133,7 @@ export class SessionStateMachine {
         seenResultIds: new Set(),
         context: null,
         contextAt: -Infinity,
+        compacts: [],
       };
       this.sessions.set(id, session);
     }
@@ -142,7 +146,20 @@ export class SessionStateMachine {
       enriched = true;
     }
     if (kind === 'SessionStart') {
-      return updateContext(session, event.context, at) || created || enriched;
+      let compacted = false;
+      if (event.source === 'compact' && session.context && event.context &&
+          at >= session.contextAt && Number.isSafeInteger(event.context.tokens) &&
+          event.context.tokens >= 0 && Number.isSafeInteger(event.context.window) &&
+          event.context.window > 0) {
+        const id = `${session.id}:compact:${at}`;
+        if (!session.compacts.some(compact => compact.id === id)) {
+          session.compacts.push({ id, ts: at, before: session.context.tokens,
+            after: event.context.tokens, trigger: 'auto' });
+          if (session.compacts.length > 3) session.compacts.shift();
+          compacted = true;
+        }
+      }
+      return updateContext(session, event.context, at) || compacted || created || enriched;
     }
 
     if (session.turnId !== event.turn_id) {
@@ -253,6 +270,7 @@ export class SessionStateMachine {
       activity: session.activity && { ...session.activity },
       context: session.context && { ...session.context },
       results: session.results.map(result => ({ ...result })),
+      compacts: session.compacts.map(compact => ({ ...compact })),
       subagents: [],
     })).sort((a, b) => a.id.localeCompare(b.id));
   }
