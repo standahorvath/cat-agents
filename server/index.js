@@ -65,7 +65,13 @@ async function handleOffice(req, res, action) {
 }
 
 function serveStatic(req, res) {
-  const urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  let urlPath;
+  try {
+    urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  } catch {
+    res.writeHead(400).end();
+    return;
+  }
   let file = path.normalize(path.join(DIST_DIR, urlPath));
   if (!file.startsWith(DIST_DIR)) {
     res.writeHead(403).end();
