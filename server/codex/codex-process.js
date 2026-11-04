@@ -35,7 +35,7 @@ export function codexProcesses(processes) {
 
 export async function findCodexProcesses() {
   const { stdout } = await execFileAsync('/bin/ps', ['-axo', 'pid=,ppid=,lstart=,command='], {
-    timeout: 2000, maxBuffer: 8 * 1024 * 1024,
+    timeout: 2000, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, LC_ALL: 'C' },
   });
   return codexProcesses(parseProcesses(stdout));
 }

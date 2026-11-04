@@ -57,6 +57,8 @@ if (opts.version) {
 }
 
 const [command] = positionals;
+// Resolve the data directory before importing the hook installer as well as the server.
+process.env.DATA_DIR = path.resolve(opts.data || process.env.DATA_DIR || path.join(os.homedir(), '.cat-agents'));
 if (command === 'remove-hooks') {
   const { removeHooks } = await import('../server/hooks.js');
   console.log(removeHooks());
@@ -80,8 +82,6 @@ if (command) {
 if (opts.port) process.env.PORT = opts.port;
 if (opts.host) process.env.HOST = opts.host;
 if (opts['no-hooks']) process.env.CAT_AGENTS_HOOKS = 'off';
-process.env.DATA_DIR = path.resolve(opts.data || process.env.DATA_DIR || path.join(os.homedir(), '.cat-agents'));
-
 const { server } = await import('../server/index.js');
 
 server.on('error', (err) => {

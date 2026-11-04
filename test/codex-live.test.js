@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { sanitizeHookEvent } from '../server/codex/hook-event.js';
 import { contextFromTranscript } from '../server/codex/context.js';
 import { editHooks } from '../server/codex/hook-install.js';
@@ -30,6 +31,37 @@ test('in-process adapter skips heartbeat while external adapter keeps it', async
       }
     }
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('accepted socket errors do not stop the adapter', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cat-adapter-error-'));
+  const adapter = new Adapter({ socketPath: path.join(dir, 'adapter.sock'),
+    processFinder: async () => [], publish: async () => {}, token: 'test',
+    processPollMs: 60_000, heartbeatMs: null });
+  try {
+    await adapter.start();
+    const handled = new Promise(resolve => {
+      adapter.server.once('connection', socket => {
+        socket.emit('error', Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }));
+        socket.destroy();
+        resolve();
+      });
+    });
+    const first = net.createConnection(adapter.socketPath);
+    first.on('error', () => {});
+    await handled;
+    assert.equal(adapter.server.listening, true);
+    const second = net.createConnection(adapter.socketPath);
+    try {
+      await new Promise((resolve, reject) => {
+        second.once('connect', resolve);
+        second.once('error', reject);
+      });
+    } finally { second.destroy(); first.destroy(); }
+  } finally {
+    await adapter.stop();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -100,6 +132,8 @@ test('hook reports test outcomes without retaining commands or output', () => {
     tool_name: 'Bash', tool_use_id: 'tool_1', tool_input: { command: 'npm test -- secret' } };
   const result = response => sanitizeHookEvent({ ...base, tool_response: response });
   assert.equal(result({ exit_code: 0, output: '12 passed' }).result_kind, 'testsPass');
+  assert.equal(result({ exit_code: 0, output: 'ℹ fail 0' }).result_kind, 'testsPass');
+  assert.equal(result({ exit_code: 0, output: '0 fail' }).result_kind, 'testsPass');
   assert.equal(result({ exit_code: 1, output: '1 failed' }).result_kind, 'testsFail');
   assert.equal(result({ exit_code: 0, output: '1 failed' }).result_kind, 'testsFail');
   assert.equal(result({ output: 'still running' }).result_kind, undefined);
@@ -134,9 +168,10 @@ test('hook installation preserves other hooks and is idempotent', () => {
     const target = path.join(dir, 'hooks.json');
     const original = { hooks: { Stop: [{ matcher: '*', hooks: [{ type: 'command', command: 'other-hook' }] }] } };
     fs.writeFileSync(target, JSON.stringify(original));
-    const options = { target, nodePath: '/usr/local/bin/node', script: '/tmp/my-hook.js' };
+    const options = { target, nodePath: '/usr/local/bin/node', script: '/tmp/my-hook.js', runDir: '/tmp/custom data/codex' };
     assert.equal(editHooks({ ...options, action: 'install' }).changed, true);
     const installed = fs.readFileSync(target, 'utf8');
+    assert.match(installed, /CAT_CODEX_RUN_DIR='\/tmp\/custom data\/codex'/);
     assert.equal(editHooks({ ...options, action: 'install' }).changed, false);
     assert.equal(fs.readFileSync(target, 'utf8'), installed);
     assert.equal(JSON.parse(installed).hooks.Stop.length, 2);
@@ -159,6 +194,21 @@ test('process scanner finds CLI sessions and excludes desktop and service proces
   assert.deepEqual(codexProcesses(processes).map(x => [x.pid, x.kind]), [
     [92500, 'cli'], [92501, 'cli'], [92503, 'backend'],
   ]);
+  assert.equal(Number.isFinite(codexProcesses(processes)[0].startedAt), true);
+});
+
+test('receiver rejects events older than a process parsed from C-locale ps output', async () => {
+  const [process] = codexProcesses(parseProcesses(
+    '92500 90000 Sun Oct 25 20:22:15 2026     /opt/homebrew/bin/codex --model o3',
+  ));
+  const adapter = new Adapter({ processFinder: async () => [process],
+    publish: async () => {}, token: 'test' });
+  await adapter.refreshProcess();
+  assert.equal(await adapter.receive({ parentPid: process.pid,
+    occurredAt: '2026-10-25T00:00:00Z',
+    event: sanitizeHookEvent({ hook_event_name: 'SessionStart', session_id: 'old' }),
+  }), false);
+  assert.equal(adapter.states.size, 0);
 });
 
 test('hook captures its shell and Codex ancestors before the shell exits', () => {
@@ -201,6 +251,41 @@ test('receiver keeps CLI chats separate when hooks come from the shared backend'
       hook_event_name: 'SessionEnd', session_id: 'first',
     }) }), true);
   assert.deepEqual(adapter.states.get('backend-a').snapshot().map(s => s.id), ['codex:second']);
+});
+
+test('shared backend expires abandoned sessions and old deduplication data', async () => {
+  const sent = [];
+  const adapter = new Adapter({
+    processFinder: async () => [{ id: 'backend-a', pid: 100, startedAt: 0, kind: 'backend' }],
+    publish: async sessions => { sent.push(sessions); }, token: 'test', sessionTtlMs: 1000,
+  });
+  await adapter.refreshProcess();
+  await adapter.receive({ parentPid: 100, occurredAt: new Date().toISOString(),
+    event: sanitizeHookEvent({ hook_event_name: 'UserPromptSubmit', session_id: 'abandoned',
+      turn_id: 'turn_1', cwd: '/work/demo' }) });
+  const state = adapter.states.get('backend-a');
+  state.sessions.get('codex:abandoned').lastReceivedAt = Date.now() - 1001;
+  state.ended.set('codex:old', Date.now() - 2000);
+  state.endedReceived.set('codex:old', Date.now() - 1001);
+  await adapter.refreshProcess();
+  await adapter.requestPublish();
+  assert.deepEqual(sent.at(-1), []);
+  assert.equal(state.sessions.size, 0);
+  assert.equal(state.ended.size, 0);
+});
+
+test('live CLI sessions remain visible without new hook events', async () => {
+  const adapter = new Adapter({
+    processFinder: async () => [{ id: 'cli-a', pid: 100, startedAt: 0, kind: 'cli' }],
+    publish: async () => {}, token: 'test', sessionTtlMs: 1000,
+  });
+  await adapter.refreshProcess();
+  await adapter.receive({ parentPid: 100, occurredAt: new Date().toISOString(),
+    event: sanitizeHookEvent({ hook_event_name: 'SessionStart', session_id: 'live_cli' }) });
+  const state = adapter.states.get('cli-a');
+  state.sessions.get('codex:live_cli').lastReceivedAt = Date.now() - 1001;
+  await adapter.refreshProcess();
+  assert.deepEqual(state.snapshot().map(session => session.id), ['codex:live_cli']);
 });
 
 test('live receiver rejects stale process events and publishes cleared snapshot', async () => {

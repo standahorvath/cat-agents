@@ -1,8 +1,7 @@
 import { fingerprintToolInput } from './state.js';
 import { contextFromTranscript } from './context.js';
+import { TEST_COMMAND, TEST_FAILED } from '../test-patterns.js';
 
-const TEST_COMMAND = /\b((npm|pnpm|yarn|bun)( run)? test|vitest|jest|pytest|phpunit|pest|go test|cargo test|rspec|mocha|artisan test|composer test|dotnet test|tox|make (test|check))\b|(?:^|[\s;"'])\.?\/gradlew?\s+[^\n;]*\btest\b|\bmvn\s+[^\n;]*\btest\b/i;
-const TEST_FAILED = /(\b[1-9]\d* (failed|failing|failures?|errors?)\b|FAILURES!|ERRORS!|Tests:.*\bfailed|✗|FAIL\b)/i;
 
 function responseText(value) {
   if (typeof value === 'string') return value;

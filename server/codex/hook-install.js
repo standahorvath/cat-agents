@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { RUN_DIR } from './runtime-config.js';
 
 const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'SessionEnd'];
 const MARKER = 'CAT_AGENTS_CODEX_ADAPTER=1';
@@ -9,8 +10,8 @@ const HOOK_SCRIPT = fileURLToPath(new URL('./hook.js', import.meta.url));
 
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 
-export function hookCommand(nodePath = process.execPath, script = HOOK_SCRIPT) {
-  return `${MARKER} ${quote(nodePath)} ${quote(script)}`;
+export function hookCommand(nodePath = process.execPath, script = HOOK_SCRIPT, runDir = RUN_DIR) {
+  return `${MARKER} CAT_CODEX_RUN_DIR=${quote(runDir)} ${quote(nodePath)} ${quote(script)}`;
 }
 
 function isOurs(hook) {
@@ -19,7 +20,7 @@ function isOurs(hook) {
 }
 
 export function editHooks({ action, target = path.join(os.homedir(), '.codex', 'hooks.json'),
-                     nodePath = process.execPath, script = HOOK_SCRIPT } = {}) {
+                     nodePath = process.execPath, script = HOOK_SCRIPT, runDir = RUN_DIR } = {}) {
   if (!['install', 'remove'].includes(action)) throw new TypeError('action must be install or remove');
   const existed = fs.existsSync(target);
   const original = existed ? fs.readFileSync(target, 'utf8') : null;
@@ -40,7 +41,7 @@ export function editHooks({ action, target = path.join(os.homedir(), '.codex', '
       return { ...group, hooks };
     }).filter(group => !Array.isArray(group?.hooks) || group.hooks.length);
     if (action === 'install') {
-      remaining.push({ hooks: [{ type: 'command', command: hookCommand(nodePath, script),
+      remaining.push({ hooks: [{ type: 'command', command: hookCommand(nodePath, script, runDir),
         async: event !== 'SessionEnd', timeout: event === 'SessionEnd' ? 3 : 2 }] });
       changed = true;
     }

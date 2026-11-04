@@ -17,6 +17,23 @@ const apply = (machine, value, time, processId = A) =>
   machine.apply(value, { processId, occurredAt: time });
 const only = machine => machine.snapshot()[0];
 
+test('deduplication metadata stays bounded during a long session', () => {
+  const machine = new SessionStateMachine();
+  machine.setProcess(A);
+  for (let i = 0; i < 520; i++) {
+    const time = new Date(Date.parse(at(1)) + i * 1000).toISOString();
+    apply(machine, event('UserPromptSubmit', `turn_${i}`), time);
+    apply(machine, event('PostToolUse', `turn_${i}`, {
+      tool_name: 'Bash', tool_use_id: `tool_${i}`, result_kind: 'testsPass',
+    }), time);
+  }
+  const session = machine.sessions.get('codex:thr_alpha');
+  assert.equal(session.seenTurns.size, 512);
+  assert.equal(session.seenResultIds.size, 512);
+  assert.equal(session.seenTurns.has('turn_0'), false);
+  assert.equal(session.seenResultIds.has('codex:thr_alpha:tool_0'), false);
+});
+
 test('anonymized hook sequence keeps two CLI sessions separate and resumes after restart', () => {
   const machine = new SessionStateMachine();
   machine.setProcess(A);

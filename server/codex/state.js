@@ -40,6 +40,7 @@ function recordResult(session, event, at) {
   const id = `${session.id}:${event.tool_use_id}`;
   if (session.seenResultIds.has(id)) return false;
   session.seenResultIds.add(id);
+  if (session.seenResultIds.size > 512) session.seenResultIds.delete(session.seenResultIds.values().next().value);
   session.results.push({ id, kind: event.result_kind, ts: at });
   if (session.results.length > 6) session.results.shift();
   return true;
@@ -63,6 +64,7 @@ export class SessionStateMachine {
     this.processId = null;
     this.sessions = new Map();
     this.ended = new Map();
+    this.endedReceived = new Map();
   }
 
   // A process ID identifies one CLI lifetime, including its start time.
@@ -74,7 +76,27 @@ export class SessionStateMachine {
     this.processId = processId;
     this.sessions.clear();
     this.ended.clear();
+    this.endedReceived.clear();
     return true;
+  }
+
+  prune(now, ttlMs, expireSessions = true) {
+    let changed = false;
+    if (expireSessions) {
+      for (const [id, session] of this.sessions) {
+        if (now - session.lastReceivedAt > ttlMs) {
+          this.sessions.delete(id);
+          changed = true;
+        }
+      }
+    }
+    for (const [id, receivedAt] of this.endedReceived) {
+      if (now - receivedAt > ttlMs) {
+        this.endedReceived.delete(id);
+        this.ended.delete(id);
+      }
+    }
+    return changed;
   }
 
   apply(event, { processId, occurredAt } = {}) {
@@ -94,12 +116,14 @@ export class SessionStateMachine {
       if (session && at < session.lastAt) return false;
       this.sessions.delete(id);
       this.ended.set(id, at);
+      this.endedReceived.set(id, Date.now());
       return Boolean(session);
     }
 
     if (endedAt !== undefined) {
       if (kind !== 'SessionStart' || at <= endedAt) return false;
       this.ended.delete(id);
+      this.endedReceived.delete(id);
     }
 
     if (TURN_EVENTS.has(kind) && (typeof event.turn_id !== 'string' || !event.turn_id)) {
@@ -125,6 +149,7 @@ export class SessionStateMachine {
         turnId: null,
         lastAt: -Infinity,
         lastPriority: -1,
+        lastReceivedAt: Date.now(),
         seenTurns: new Set(),
         activeToolUseId: null,
         waitingInputKey: null,
@@ -137,6 +162,7 @@ export class SessionStateMachine {
       };
       this.sessions.set(id, session);
     }
+    session.lastReceivedAt = Date.now();
 
     let enriched = false;
     if (!session.cwd && typeof event.cwd === 'string' && event.cwd) {
@@ -172,6 +198,7 @@ export class SessionStateMachine {
           (at === session.lastAt && session.status !== 'idle' && kind !== 'UserPromptSubmit')) return false;
       session.turnId = event.turn_id;
       session.seenTurns.add(event.turn_id);
+      if (session.seenTurns.size > 512) session.seenTurns.delete(session.seenTurns.values().next().value);
       session.lastAt = -Infinity;
       session.lastPriority = -1;
       session.activeToolUseId = null;

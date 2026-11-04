@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { hookState } from './hooks.js';
+import { TEST_COMMAND, TEST_FAILED } from './test-patterns.js';
 
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const SESSIONS_DIR = path.join(CLAUDE_DIR, 'sessions');
@@ -148,8 +149,6 @@ function describeTool(block, ts) {
 
 // Results of commands: tests, failures, commits
 
-const TEST_COMMAND = /\b((npm|pnpm|yarn|bun)( run)? test|vitest|jest|pytest|phpunit|pest|go test|cargo test|rspec|mocha|artisan test|composer test|dotnet test|tox|make (test|check))\b/;
-const TEST_FAILED = /(\b[1-9]\d* (failed|failing|failures?|errors?)\b|FAILURES!|ERRORS!|Tests:.*\bfailed|✗|FAIL\b)/;
 
 function resultText(block) {
   if (typeof block.content === 'string') return block.content;
