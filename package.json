@@ -1,10 +1,11 @@
 {
   "name": "cat-agents",
   "version": "1.0.2",
-  "description": "Live visualization of locally running Claude Code agents as an isometric voxel office full of cats",
+  "description": "Live visualization of locally running Claude Code and Codex agents as an isometric voxel office full of cats",
   "keywords": [
     "claude",
     "claude-code",
+    "codex",
     "agents",
     "visualization",
     "cats"

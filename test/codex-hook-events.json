@@ -1,0 +1,19 @@
+[
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:08:03.367Z", "event": { "hook_event_name": "SessionStart", "session_id": "thr_alpha", "cwd": "/work/example-project", "source": "resume" } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:08:03.368Z", "event": { "hook_event_name": "UserPromptSubmit", "session_id": "thr_alpha", "turn_id": "turn_1", "cwd": "/work/example-project" } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:08:06.412Z", "event": { "hook_event_name": "PreToolUse", "session_id": "thr_alpha", "turn_id": "turn_1", "tool_name": "webrun", "tool_use_id": "tool_1", "tool_input": { "query": "example" } } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:08:07.955Z", "event": { "hook_event_name": "PostToolUse", "session_id": "thr_alpha", "turn_id": "turn_1", "tool_name": "webrun", "tool_use_id": "tool_1", "tool_input": { "query": "example" } } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:08:18.308Z", "event": { "hook_event_name": "Stop", "session_id": "thr_alpha", "turn_id": "turn_1" } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:08:47.373Z", "event": { "hook_event_name": "UserPromptSubmit", "session_id": "thr_alpha", "turn_id": "turn_2" } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:08:52.525Z", "event": { "hook_event_name": "PermissionRequest", "session_id": "thr_alpha", "turn_id": "turn_2", "tool_name": "Bash", "tool_input": { "command": "echo safe" } } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:08:52.525Z", "event": { "hook_event_name": "PreToolUse", "session_id": "thr_alpha", "turn_id": "turn_2", "tool_name": "Bash", "tool_use_id": "tool_2", "tool_input": { "command": "echo safe" } } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:08:55.158Z", "event": { "hook_event_name": "PostToolUse", "session_id": "thr_alpha", "turn_id": "turn_2", "tool_name": "Bash", "tool_use_id": "tool_2", "tool_input": { "command": "echo safe" } } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:09:26.494Z", "event": { "hook_event_name": "SessionStart", "session_id": "thr_beta", "cwd": "/work/example-project", "source": "resume" } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:09:26.494Z", "event": { "hook_event_name": "UserPromptSubmit", "session_id": "thr_beta", "turn_id": "turn_b1", "cwd": "/work/example-project" } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:09:32.893Z", "event": { "hook_event_name": "Stop", "session_id": "thr_alpha", "turn_id": "turn_2" } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:10:25.804Z", "event": { "hook_event_name": "Stop", "session_id": "thr_beta", "turn_id": "turn_b1" } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:10:39.454Z", "event": { "hook_event_name": "SessionEnd", "session_id": "thr_alpha", "reason": "other" } },
+  { "processId": "cli-a:87315:start-a", "occurredAt": "2026-10-25T19:11:28.838Z", "event": { "hook_event_name": "SessionEnd", "session_id": "thr_beta", "reason": "other" } },
+  { "processId": "cli-b:89184:start-b", "occurredAt": "2026-10-25T19:11:54.559Z", "event": { "hook_event_name": "SessionStart", "session_id": "thr_beta", "cwd": "/work/example-project", "source": "resume" } },
+  { "processId": "cli-b:89184:start-b", "occurredAt": "2026-10-25T19:11:54.559Z", "event": { "hook_event_name": "UserPromptSubmit", "session_id": "thr_beta", "turn_id": "turn_b2" } }
+]
