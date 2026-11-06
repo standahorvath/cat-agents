@@ -148,6 +148,24 @@ test('CLI context tracks the latest input usage and shrinks after compaction', (
   assert.equal(only(machine).compacts.length, 1);
 });
 
+test('compact hooks wait for a fresh lower token count and record one compaction', () => {
+  const machine = new SessionStateMachine();
+  machine.setProcess(A);
+  apply(machine, event('SessionStart', 'turn_1', { context: { tokens: 200000, window: 258400 } }), at(1));
+  apply(machine, event('PreCompact', 'turn_1', { context: { tokens: 200000, window: 258400 } }), at(2));
+  apply(machine, event('PostCompact', 'turn_1', { context: { tokens: 200000, window: 258400 } }), at(3));
+  assert.deepEqual(only(machine).compacts, []);
+  apply(machine, event('SessionStart', 'turn_1', { source: 'compact', context: { tokens: 200000, window: 258400 } }), at(4));
+  assert.deepEqual(only(machine).compacts, []);
+  apply(machine, event('UserPromptSubmit', 'turn_1'), at(4));
+  apply(machine, event('Stop', 'turn_1', { context: { tokens: 20000, window: 258400 } }), at(5));
+  assert.deepEqual(only(machine).compacts, [{ id: `codex:thr_alpha:compact:${Date.parse(at(3))}`,
+    ts: Date.parse(at(3)), before: 200000, after: 20000, trigger: 'auto' }]);
+  assert.equal(only(machine).context.tokens, 20000);
+  apply(machine, event('PostCompact', 'turn_1', { context: { tokens: 20000, window: 258400 } }), at(3));
+  assert.equal(only(machine).compacts.length, 1);
+});
+
 test('a late SessionStart cannot replace context from a newer hook', () => {
   const machine = new SessionStateMachine();
   machine.setProcess(A);

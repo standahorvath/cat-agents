@@ -145,6 +145,9 @@ test('hook reports test outcomes without retaining commands or output', () => {
   assert.equal(sanitizeHookEvent({ ...base, tool_name: 'functions.exec',
     tool_input: { code: 'const r=await tools.exec_command({cmd:"npm test"});text(r.output)' },
     tool_response: { output: [{ text: 'Script completed\nOutput:\n12 passed' }] } }).result_kind, 'testsPass');
+  assert.equal(sanitizeHookEvent({ ...base, tool_name: 'exec',
+    tool_input: { code: 'const r=await tools.exec_command({cmd:"node --test test/codex-state.test.js"}); text(r.output);' },
+    tool_response: { output: [{ text: 'Script completed' }, { text: '1..21\n# pass 21\n# fail 0' }] } }).result_kind, 'testsPass');
 });
 
 test('hook reports only confirmed successful push and merge commands', () => {
@@ -172,6 +175,8 @@ test('hook installation preserves other hooks and is idempotent', () => {
     assert.equal(editHooks({ ...options, action: 'install' }).changed, true);
     const installed = fs.readFileSync(target, 'utf8');
     assert.match(installed, /CAT_CODEX_RUN_DIR='\/tmp\/custom data\/codex'/);
+    assert.equal(JSON.parse(installed).hooks.PreCompact.length, 1);
+    assert.equal(JSON.parse(installed).hooks.PostCompact.length, 1);
     assert.equal(editHooks({ ...options, action: 'install' }).changed, false);
     assert.equal(fs.readFileSync(target, 'utf8'), installed);
     assert.equal(JSON.parse(installed).hooks.Stop.length, 2);
@@ -258,6 +263,7 @@ test('shared backend expires abandoned sessions and old deduplication data', asy
   const adapter = new Adapter({
     processFinder: async () => [{ id: 'backend-a', pid: 100, startedAt: 0, kind: 'backend' }],
     publish: async sessions => { sent.push(sessions); }, token: 'test', sessionTtlMs: 1000,
+    idleSessionTtlMs: 1000,
   });
   await adapter.refreshProcess();
   await adapter.receive({ parentPid: 100, occurredAt: new Date().toISOString(),
@@ -272,6 +278,51 @@ test('shared backend expires abandoned sessions and old deduplication data', asy
   assert.deepEqual(sent.at(-1), []);
   assert.equal(state.sessions.size, 0);
   assert.equal(state.ended.size, 0);
+});
+
+test('idle chat on a shared backend stays visible after ten minutes without hooks', async () => {
+  const adapter = new Adapter({
+    processFinder: async () => [{ id: 'backend-a', pid: 100, startedAt: 0, kind: 'backend' }],
+    publish: async () => {}, token: 'test',
+  });
+  await adapter.refreshProcess();
+  await adapter.receive({ parentPid: 100, occurredAt: new Date().toISOString(),
+    event: sanitizeHookEvent({ hook_event_name: 'SessionStart', session_id: 'open_chat' }) });
+  const state = adapter.states.get('backend-a');
+  state.sessions.get('codex:open_chat').lastReceivedAt = Date.now() - 10 * 60_000;
+  await adapter.refreshProcess();
+  assert.deepEqual(state.snapshot().map(session => session.id), ['codex:open_chat']);
+});
+
+test('shared backend returns a busy chat to idle when Stop is lost', async () => {
+  const adapter = new Adapter({
+    processFinder: async () => [{ id: 'backend-a', pid: 100, startedAt: 0, kind: 'backend' }],
+    publish: async () => {}, token: 'test', sessionTtlMs: 1000,
+  });
+  await adapter.refreshProcess();
+  await adapter.receive({ parentPid: 100, occurredAt: new Date().toISOString(),
+    event: sanitizeHookEvent({ hook_event_name: 'UserPromptSubmit', session_id: 'open_chat',
+      turn_id: 'turn_1' }) });
+  const state = adapter.states.get('backend-a');
+  state.sessions.get('codex:open_chat').lastReceivedAt = Date.now() - 1001;
+  await adapter.refreshProcess();
+  assert.equal(state.snapshot()[0].status, 'idle');
+  assert.equal(state.snapshot().length, 1);
+});
+
+test('live CLI also returns a busy chat to idle when Stop is lost', async () => {
+  const adapter = new Adapter({
+    processFinder: async () => [{ id: 'cli-a', pid: 100, startedAt: 0, kind: 'cli' }],
+    publish: async () => {}, token: 'test', sessionTtlMs: 1000,
+  });
+  await adapter.refreshProcess();
+  await adapter.receive({ parentPid: 100, occurredAt: new Date().toISOString(),
+    event: sanitizeHookEvent({ hook_event_name: 'UserPromptSubmit', session_id: 'open_chat',
+      turn_id: 'turn_1' }) });
+  const state = adapter.states.get('cli-a');
+  state.sessions.get('codex:open_chat').lastReceivedAt = Date.now() - 1001;
+  await adapter.refreshProcess();
+  assert.equal(state.snapshot()[0].status, 'idle');
 });
 
 test('live CLI sessions remain visible without new hook events', async () => {

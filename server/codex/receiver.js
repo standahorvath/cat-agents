@@ -9,7 +9,8 @@ import { SOCKET_PATH, OFFICE_URL, localToken } from './runtime-config.js';
 export class Adapter {
   constructor({ processFinder = findCodexProcesses, publish = publishSnapshot,
                 socketPath = SOCKET_PATH, officeUrl = OFFICE_URL, token = localToken(),
-                processPollMs = 1000, heartbeatMs = 5000, sessionTtlMs = 5 * 60_000 } = {}) {
+                processPollMs = 1000, heartbeatMs = 5000, sessionTtlMs = 5 * 60_000,
+                idleSessionTtlMs = 24 * 60 * 60_000 } = {}) {
     this.processFinder = processFinder;
     this.publish = publish;
     this.socketPath = socketPath;
@@ -18,6 +19,7 @@ export class Adapter {
     this.processPollMs = processPollMs;
     this.heartbeatMs = heartbeatMs;
     this.sessionTtlMs = sessionTtlMs;
+    this.idleSessionTtlMs = idleSessionTtlMs;
     this.processes = new Map();
     this.states = new Map();
     this.server = null;
@@ -43,7 +45,8 @@ export class Adapter {
     this.processes = processes;
     for (const [id, state] of this.states) {
       const process = [...processes.values()].find(item => item.id === id);
-      if (state.prune(Date.now(), this.sessionTtlMs, process?.kind === 'backend')) changed = true;
+      if (state.prune(Date.now(), this.sessionTtlMs, process?.kind === 'backend',
+                      this.idleSessionTtlMs)) changed = true;
     }
     if (changed) this.requestPublish();
     return next;

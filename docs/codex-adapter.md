@@ -41,5 +41,9 @@ heartbeat snapshots. `context` is `null` until the CLI transcript contains a
 valid token-count event. The hook reads only the latest input-token count and
 model context window; it never forwards transcript text. Invalid requests leave
 the last valid snapshot intact.
-The optional `compacts` array contains up to three recent `SessionStart` events
-whose source is `compact`, with token counts before and after the compaction.
+The optional `compacts` array contains up to three recent compactions with
+token counts before and after each one.
+When `PreCompact` and `PostCompact` hooks are available, the adapter instead
+uses them to identify the compaction. It records the pre-compaction token count
+and waits for a lower count in a later transcript usage record before publishing
+the event. The `SessionStart` path remains a fallback for older Codex versions.
