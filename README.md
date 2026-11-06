@@ -111,11 +111,15 @@ New version on Docker Hub: `docker buildx build --platform linux/amd64,linux/arm
 
 The port is only reachable from this computer. The host's processes aren't visible inside the container, so whether a session is alive isn't checked by PID: Claude deletes `sessions/<pid>.json` when it exits, and a session with no activity for more than 48 h (typically after a crash) is hidden (`CLAUDE_STALE_HOURS`).
 
+Codex CLI sessions aren't shown in Docker: the bundled Codex adapter scans macOS processes, so run the office with `npx cat-agents` on macOS to see them (see [Codex CLI](#codex-cli)).
+
 ## Claude Code hooks
 
 On startup the server adds hooks to `~/.claude/settings.json` by itself (`PreToolUse`, `PostToolUse`, `Notification`, `Stop`, `UserPromptSubmit`, `SubagentStop`). Thanks to them the cats react instantly and notice when an agent is waiting for your permission: the cat runs to the front, waves and meows. A hook only sends the event to `http://127.0.0.1:4317/api/hook`; when the office isn't running, nothing happens and Claude isn't slowed down.
 
 The original file is backed up once to `settings.json.cat-agents.bak`, our entries are recognisable by the `cat-agents` marker and are never duplicated. Removal: `npx cat-agents remove-hooks`, or `npm run hooks:remove` in the repository. Disable installation with the variable `CAT_AGENTS_HOOKS=off` (or `--no-hooks`). The hooks call `curl`, so on Windows they rely on Git Bash, which Claude Code uses.
+
+On macOS the server also installs Codex CLI hooks into `~/.codex/hooks.json` (trust them in Codex with `/hooks`); see [Codex CLI](#codex-cli).
 
 ## Controls
 
@@ -189,9 +193,19 @@ Windows and light follow the real time of day, the clock on the wall shows the r
 - `/poses.html` all cat poses side by side (`?only=sit,typing&zoom=2`, `?spin`)
 - in development mode the scene is available as `window.__world` (e.g. `__world.cats`, `cat.startActivity('coffee')`)
 
-Code: `server/` reads the state from `~/.claude`, `src/scene/` is the game: `World.js` (renderer, camera, sync), `Office.js` (room, furniture, spots, dynamic objects), `CatModel.js` + `poses.js` (voxel cat and poses), `activities.js` + `Agent.js` (behaviour, movement, lines), `interactions.js` (interactions between cats), `events.js` (random events), `pixelPipeline.js` (low resolution, dithering, outlines), `overlay.js` (name tags, speech bubbles, captions).
+Code: `server/` reads the state from `~/.claude`, `server/codex/` is the Codex CLI adapter (hooks, process scan, snapshots), `src/scene/` is the game: `World.js` (renderer, camera, sync), `Office.js` (room, furniture, spots, dynamic objects), `CatModel.js` + `poses.js` (voxel cat and poses), `activities.js` + `Agent.js` (behaviour, movement, lines), `interactions.js` (interactions between cats), `events.js` (random events), `pixelPipeline.js` (low resolution, dithering, outlines), `overlay.js` (name tags, speech bubbles, captions).
 
 ## Where the data comes from
+
+### Claude Code
+
+Every second the server reads `~/.claude` (or `$CLAUDE_CONFIG_DIR`) and sends changes over SSE to `/api/events`:
+
+- `sessions/<pid>.json`: running sessions and their `busy` / `idle` status; the process is checked to be alive
+- `projects/<project>/<sessionId>.jsonl`: the transcript; the latest `tool_use` / `tool_result` tell the current tool, `usage` the context size and `compact_boundary` a compaction
+- `projects/<project>/<sessionId>/subagents/*.jsonl` + `.meta.json`: subagents and their description
+
+This is not a documented Claude Code API, so the format may change with a new version. The server listens on `127.0.0.1` only.
 
 ### Codex CLI
 
@@ -213,14 +227,6 @@ when Cat Office runs inside the Linux Docker image. The optional
 `PUT /api/external-sources/codex/sessions` endpoint remains available for
 external adapters; it requires `CAT_AGENTS_EXTERNAL_TOKEN` and loopback access.
 See the [snapshot protocol](docs/codex-adapter.md).
-
-Every second the server reads `~/.claude` (or `$CLAUDE_CONFIG_DIR`) and sends changes over SSE to `/api/events`:
-
-- `sessions/<pid>.json`: running sessions and their `busy` / `idle` status; the process is checked to be alive
-- `projects/<project>/<sessionId>.jsonl`: the transcript; the latest `tool_use` / `tool_result` tell the current tool, `usage` the context size and `compact_boundary` a compaction
-- `projects/<project>/<sessionId>/subagents/*.jsonl` + `.meta.json`: subagents and their description
-
-This is not a documented Claude Code API, so the format may change with a new version. The server listens on `127.0.0.1` only.
 
 ## License
 
