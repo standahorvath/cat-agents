@@ -35,11 +35,14 @@ bodies over 256 KiB, more than 100 sessions, duplicate IDs, IDs outside the
 `codex:` namespace, unsupported statuses, and extra fields. The accepted
 statuses are `busy`, `waiting`, and `idle`; `activity` may be `null`.
 Prompt, tool input, and tool output content are not accepted. The optional
-`results` array contains at most six sanitized commit, push, merge or test outcome events. Each
+`results` array contains at most 32 sanitized commit, push, merge, test or build outcome events. Each
 result has a unique tool-call ID so the office counts it once, including across
 heartbeat snapshots. `context` is `null` until the CLI transcript contains a
 valid token-count event. The hook reads only the latest input-token count and
-model context window; it never forwards transcript text. Invalid requests leave
+model context window. At `Stop`, it also checks completed custom shell tool
+results in the current turn because Codex does not emit tool hooks for those
+calls. Only the result kind, timestamp, and tool-call ID are forwarded; command
+and output text stay in the hook process. Invalid requests leave
 the last valid snapshot intact.
 The optional `compacts` array contains up to three recent compactions with
 token counts before and after each one.

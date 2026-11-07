@@ -42,15 +42,18 @@ test('accepts numerical CLI context without transcript content', () => {
   assert.deepEqual(validateCodexSnapshot({ schemaVersion: 1, sessions: [{ ...session, context }] }).sessions[0].context, context);
 });
 
-test('accepts sanitized commit, push, merge and test results for achievement counting', () => {
+test('accepts sanitized commit, push, merge, test and build results for achievement counting', () => {
   const results = [
     { id: 'codex:thr_123:tool_1', kind: 'commit', ts: 1000 },
     { id: 'codex:thr_123:tool_2', kind: 'testsPass', ts: 1001 },
     { id: 'codex:thr_123:tool_3', kind: 'testsFail', ts: 1002 },
     { id: 'codex:thr_123:tool_4', kind: 'push', ts: 1003 },
     { id: 'codex:thr_123:tool_5', kind: 'merge', ts: 1004 },
+    { id: 'codex:thr_123:tool_6', kind: 'build', ts: 1005 },
   ];
   assert.deepEqual(validateCodexSnapshot({ schemaVersion: 1, sessions: [{ ...session, results }] }).sessions[0].results, results);
+  const failure = { id: 'codex:thr_123:tool_7', kind: 'buildFail', ts: 1006 };
+  assert.deepEqual(validateCodexSnapshot({ schemaVersion: 1, sessions: [{ ...session, results: [failure] }] }).sessions[0].results, [failure]);
 });
 
 test('accepts sanitized compaction metadata', () => {

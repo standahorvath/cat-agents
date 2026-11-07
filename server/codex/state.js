@@ -24,6 +24,14 @@ function inputKey(event) {
   return crypto.createHash('sha256').update(event.tool_name + '\0' + stableJson(event.tool_input)).digest('hex');
 }
 
+function matchesWaitingTool(session, event) {
+  if (event.tool_use_id && session.activeToolUseId &&
+      event.tool_use_id === session.activeToolUseId) return true;
+  const key = inputKey(event);
+  if (session.waitingInputKey) return session.waitingInputKey === key;
+  return Boolean(session.waitingToolName && session.waitingToolName === event.tool_name);
+}
+
 function activityFor(event, at) {
   const name = event.tool_name || 'Tool';
   return { name, category: name === 'Bash' ? 'shell' : 'tool', detail: name, ts: at };
@@ -34,7 +42,7 @@ function positionAfter(at, priority, session) {
 }
 
 function recordResult(session, event, at) {
-  if (!['commit', 'push', 'merge', 'testsPass', 'testsFail'].includes(event.result_kind) ||
+  if (!['commit', 'push', 'merge', 'testsPass', 'testsFail', 'build', 'buildFail'].includes(event.result_kind) ||
       !['Bash', 'exec_command', 'exec', 'functions.exec'].includes(event.tool_name) ||
       !event.tool_use_id) return false;
   const id = `${session.id}:${event.tool_use_id}`;
@@ -42,7 +50,7 @@ function recordResult(session, event, at) {
   session.seenResultIds.add(id);
   if (session.seenResultIds.size > 512) session.seenResultIds.delete(session.seenResultIds.values().next().value);
   session.results.push({ id, kind: event.result_kind, ts: at });
-  if (session.results.length > 6) session.results.shift();
+  if (session.results.length > 32) session.results.shift();
   return true;
 }
 
@@ -256,14 +264,8 @@ export class SessionStateMachine {
     if (kind === 'UserPromptSubmit' && session.lastAt !== -Infinity) return false;
 
     if (kind === 'PostToolUse') {
-      const key = inputKey(event);
       if (session.status === 'waiting') {
-        const matches = session.waitingInputKey
-          ? session.waitingInputKey === key
-          : session.activeToolUseId && event.tool_use_id
-            ? session.activeToolUseId === event.tool_use_id
-            : session.waitingToolName === event.tool_name;
-        if (!matches) return resultAdded;
+        if (!matchesWaitingTool(session, event)) return resultAdded;
       } else if (session.activeToolUseId && event.tool_use_id &&
                  session.activeToolUseId !== event.tool_use_id) {
         return resultAdded;
@@ -286,8 +288,7 @@ export class SessionStateMachine {
     if (kind === 'PreToolUse') {
       // PermissionRequest may arrive before PreToolUse for the same call.
       const startsApprovedTool = session.status === 'waiting' && at > session.statusSince &&
-        (session.waitingInputKey ? session.waitingInputKey === inputKey(event)
-          : session.waitingToolName === event.tool_name);
+        matchesWaitingTool(session, event);
       if (session.status !== 'waiting' || startsApprovedTool) {
         if (session.status !== 'busy') session.statusSince = at;
         session.status = 'busy';
@@ -304,6 +305,7 @@ export class SessionStateMachine {
       session.activity = activityFor(event, at);
       session.waitingInputKey = inputKey(event);
       session.waitingToolName = event.tool_name || null;
+      if (event.tool_use_id) session.activeToolUseId = event.tool_use_id;
       return true;
     }
     if (kind === 'PostToolUse') {

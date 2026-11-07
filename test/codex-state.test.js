@@ -95,6 +95,24 @@ test('a later matching PreToolUse resumes a waiting cat before the tool finishes
   assert.equal(only(machine).activity.name, 'Bash');
 });
 
+test('approved tool resumes by tool ID when its input differs from permission request', () => {
+  for (const completed of [false, true]) {
+    const machine = new SessionStateMachine();
+    machine.setProcess(A);
+    apply(machine, event('PreToolUse', 'turn_1', {
+      tool_name: 'Bash', tool_use_id: 'approved-tool', tool_input: { command: 'before' },
+    }), at(1));
+    apply(machine, event('PermissionRequest', 'turn_1', {
+      tool_name: 'Bash', tool_use_id: 'approved-tool', tool_input: { command: 'before' },
+    }), at(2));
+    assert.equal(only(machine).status, 'waiting');
+    apply(machine, event(completed ? 'PostToolUse' : 'PreToolUse', 'turn_1', {
+      tool_name: 'Bash', tool_use_id: 'approved-tool', tool_input: { command: 'after' },
+    }), at(3));
+    assert.equal(only(machine).status, 'busy');
+  }
+});
+
 test('successful Codex commit is retained as one result in the session snapshot', () => {
   const machine = new SessionStateMachine();
   machine.setProcess(A);
@@ -130,6 +148,18 @@ test('Codex push and merge results are retained once', () => {
   apply(machine, event('PreToolUse', 'turn_1', { tool_name: 'Bash', tool_use_id: 'merge_1' }), at(3));
   apply(machine, event('PostToolUse', 'turn_1', { tool_name: 'Bash', tool_use_id: 'merge_1', result_kind: 'merge' }), at(4));
   assert.deepEqual(only(machine).results.map(result => result.kind), ['push', 'merge']);
+});
+
+test('Codex build outcomes are retained once', () => {
+  const machine = new SessionStateMachine();
+  machine.setProcess(A);
+  apply(machine, event('PreToolUse', 'turn_1', { tool_name: 'exec_command', tool_use_id: 'build_1' }), at(1));
+  const passed = event('PostToolUse', 'turn_1', { tool_name: 'exec_command', tool_use_id: 'build_1', result_kind: 'build' });
+  assert.equal(apply(machine, passed, at(2)), true);
+  assert.equal(apply(machine, passed, at(2)), false);
+  apply(machine, event('PreToolUse', 'turn_1', { tool_name: 'exec', tool_use_id: 'build_2' }), at(3));
+  apply(machine, event('PostToolUse', 'turn_1', { tool_name: 'exec', tool_use_id: 'build_2', result_kind: 'buildFail' }), at(4));
+  assert.deepEqual(only(machine).results.map(result => result.kind), ['build', 'buildFail']);
 });
 
 test('CLI context tracks the latest input usage and shrinks after compaction', () => {

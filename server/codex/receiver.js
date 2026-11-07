@@ -73,9 +73,18 @@ export class Adapter {
       state.setProcess(process.id);
       this.states.set(process.id, state);
     }
-    const changed = state.apply(message.event, {
+    let changed = false;
+    if (Array.isArray(message.recoveredResults)) {
+      for (const result of message.recoveredResults.slice(-32)) {
+        if (!result || typeof result.occurredAt !== 'string') continue;
+        changed = state.apply(result.event, {
+          processId: process.id, occurredAt: result.occurredAt,
+        }) || changed;
+      }
+    }
+    changed = state.apply(message.event, {
       processId: process.id, occurredAt: message.occurredAt,
-    });
+    }) || changed;
     if (changed) this.requestPublish();
     return changed;
   }

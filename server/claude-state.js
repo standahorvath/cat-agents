@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { hookState } from './hooks.js';
-import { TEST_COMMAND, TEST_FAILED } from './test-patterns.js';
+import { TEST_COMMAND, TEST_FAILED, BUILD_COMMAND, BUILD_FAILED } from './test-patterns.js';
 
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const SESSIONS_DIR = path.join(CLAUDE_DIR, 'sessions');
@@ -157,8 +157,6 @@ function resultText(block) {
 }
 
 const DEPLOY_COMMAND = /\b(npm|pnpm|yarn|bun) run deploy\b|\bdeploy\.sh\b|\b(cap|serverless|sls|fly|netlify|firebase|wrangler)\b[^|;&]*\bdeploy\b|\bvercel --prod\b|\bkubectl apply\b|\bhelm (install|upgrade)\b|\bterraform apply\b|\bdocker push\b|\bdocker buildx build[^|;&]*--push\b/;
-const BUILD_COMMAND = /\b((npm|pnpm|yarn|bun)( run)? build|vite build|next build|tsc|webpack|cargo build|go build|gradle|mvn (package|install)|dotnet build|docker (compose )?build)\b|(^|[;&|]\s*)make\b/;
-const BUILD_FAILED = /\b(error TS\d+|Build failed|build failed|ERROR in|compilation failed|error\[E\d+\])/;
 const INSTALL_COMMAND = /\b((npm|pnpm|bun) (i|install|ci|add)|yarn (install|add)|pip3? install|composer (install|require|update)|cargo add|go get|brew install|apt(-get)? install|gem install|bundle install)\b/;
 const LINT_COMMAND = /\b(eslint|prettier|biome|ruff|flake8|phpstan|psalm|rubocop|golangci-lint|(npm|pnpm|yarn|bun)( run)? (lint|format))\b/;
 const REVERT_COMMAND = /\bgit (revert|reset --hard|restore|stash)\b|\bgit checkout -- /;
