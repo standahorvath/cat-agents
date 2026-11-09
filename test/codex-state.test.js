@@ -95,6 +95,24 @@ test('a later matching PreToolUse resumes a waiting cat before the tool finishes
   assert.equal(only(machine).activity.name, 'Bash');
 });
 
+test('approved tool resumes by tool ID when its input differs from permission request', () => {
+  for (const completed of [false, true]) {
+    const machine = new SessionStateMachine();
+    machine.setProcess(A);
+    apply(machine, event('PreToolUse', 'turn_1', {
+      tool_name: 'Bash', tool_use_id: 'approved-tool', tool_input: { command: 'before' },
+    }), at(1));
+    apply(machine, event('PermissionRequest', 'turn_1', {
+      tool_name: 'Bash', tool_use_id: 'approved-tool', tool_input: { command: 'before' },
+    }), at(2));
+    assert.equal(only(machine).status, 'waiting');
+    apply(machine, event(completed ? 'PostToolUse' : 'PreToolUse', 'turn_1', {
+      tool_name: 'Bash', tool_use_id: 'approved-tool', tool_input: { command: 'after' },
+    }), at(3));
+    assert.equal(only(machine).status, 'busy');
+  }
+});
+
 test('successful Codex commit is retained as one result in the session snapshot', () => {
   const machine = new SessionStateMachine();
   machine.setProcess(A);
@@ -132,6 +150,18 @@ test('Codex push and merge results are retained once', () => {
   assert.deepEqual(only(machine).results.map(result => result.kind), ['push', 'merge']);
 });
 
+test('Codex build outcomes are retained once', () => {
+  const machine = new SessionStateMachine();
+  machine.setProcess(A);
+  apply(machine, event('PreToolUse', 'turn_1', { tool_name: 'exec_command', tool_use_id: 'build_1' }), at(1));
+  const passed = event('PostToolUse', 'turn_1', { tool_name: 'exec_command', tool_use_id: 'build_1', result_kind: 'build' });
+  assert.equal(apply(machine, passed, at(2)), true);
+  assert.equal(apply(machine, passed, at(2)), false);
+  apply(machine, event('PreToolUse', 'turn_1', { tool_name: 'exec', tool_use_id: 'build_2' }), at(3));
+  apply(machine, event('PostToolUse', 'turn_1', { tool_name: 'exec', tool_use_id: 'build_2', result_kind: 'buildFail' }), at(4));
+  assert.deepEqual(only(machine).results.map(result => result.kind), ['build', 'buildFail']);
+});
+
 test('CLI context tracks the latest input usage and shrinks after compaction', () => {
   const machine = new SessionStateMachine();
   machine.setProcess(A);
@@ -145,6 +175,24 @@ test('CLI context tracks the latest input usage and shrinks after compaction', (
   assert.deepEqual(only(machine).compacts, [{ id: `codex:thr_alpha:compact:${Date.parse(at(3))}`,
     ts: Date.parse(at(3)), before: 200000, after: 20000, trigger: 'auto' }]);
   assert.equal(apply(machine, event('SessionStart', 'turn_2', { source: 'compact', context: { tokens: 20000, window: 258400 } }), at(3)), false);
+  assert.equal(only(machine).compacts.length, 1);
+});
+
+test('compact hooks wait for a fresh lower token count and record one compaction', () => {
+  const machine = new SessionStateMachine();
+  machine.setProcess(A);
+  apply(machine, event('SessionStart', 'turn_1', { context: { tokens: 200000, window: 258400 } }), at(1));
+  apply(machine, event('PreCompact', 'turn_1', { context: { tokens: 200000, window: 258400 } }), at(2));
+  apply(machine, event('PostCompact', 'turn_1', { context: { tokens: 200000, window: 258400 } }), at(3));
+  assert.deepEqual(only(machine).compacts, []);
+  apply(machine, event('SessionStart', 'turn_1', { source: 'compact', context: { tokens: 200000, window: 258400 } }), at(4));
+  assert.deepEqual(only(machine).compacts, []);
+  apply(machine, event('UserPromptSubmit', 'turn_1'), at(4));
+  apply(machine, event('Stop', 'turn_1', { context: { tokens: 20000, window: 258400 } }), at(5));
+  assert.deepEqual(only(machine).compacts, [{ id: `codex:thr_alpha:compact:${Date.parse(at(3))}`,
+    ts: Date.parse(at(3)), before: 200000, after: 20000, trigger: 'auto' }]);
+  assert.equal(only(machine).context.tokens, 20000);
+  apply(machine, event('PostCompact', 'turn_1', { context: { tokens: 20000, window: 258400 } }), at(3));
   assert.equal(only(machine).compacts.length, 1);
 });
 

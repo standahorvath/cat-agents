@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RUN_DIR } from './runtime-config.js';
 
-const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'SessionEnd'];
+const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PreCompact', 'PostCompact', 'Stop', 'SessionEnd'];
 const MARKER = 'CAT_AGENTS_CODEX_ADAPTER=1';
 const HOOK_SCRIPT = fileURLToPath(new URL('./hook.js', import.meta.url));
 

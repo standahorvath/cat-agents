@@ -10,6 +10,53 @@ import { editHooks } from '../server/codex/hook-install.js';
 import { parseProcesses, codexProcesses } from '../server/codex/codex-process.js';
 import { processAncestry } from '../server/codex/process-ancestry.js';
 import { Adapter } from '../server/codex/receiver.js';
+import { transcriptResults } from '../server/codex/transcript-results.js';
+
+test('Stop recovers completed custom shell test without forwarding its output', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cat-transcript-results-'));
+  const file = path.join(dir, 'session.jsonl');
+  const line = (type, payload, timestamp) => JSON.stringify({ type, payload, timestamp });
+  fs.writeFileSync(file, [
+    line('event_msg', { type: 'task_started', turn_id: 'turn-a' }, '2026-11-06T19:00:00Z'),
+    line('response_item', { type: 'custom_tool_call', name: 'exec', call_id: 'exec-1',
+      input: 'const r=await tools.exec_command({cmd:"./gradlew :module:test"}); text(r.output)' }, '2026-11-06T19:00:01Z'),
+    line('response_item', { type: 'custom_tool_call_output', call_id: 'exec-1',
+      output: [{ type: 'input_text', text: 'Script completed\nOutput:\nBUILD SUCCESSFUL in 2s\nPRIVATE' }] }, '2026-11-06T19:00:03Z'),
+    line('response_item', { type: 'custom_tool_call', name: 'exec', call_id: 'exec-2',
+      input: 'const r=await tools.exec_command({cmd:"./gradlew :module:test"}); text(r.output)' }, '2026-11-06T19:00:04Z'),
+    line('response_item', { type: 'custom_tool_call_output', call_id: 'exec-2',
+      output: 'Script running with cell ID 123' }, '2026-11-06T19:00:05Z'),
+    line('response_item', { type: 'custom_tool_call', name: 'exec', call_id: 'exec-3',
+      input: 'const r=await tools.exec_command({cmd:"echo done"}); // node --test\ntext(r.output)' }, '2026-11-06T19:00:06Z'),
+    line('response_item', { type: 'custom_tool_call_output', call_id: 'exec-3',
+      output: [{ type: 'input_text', text: 'Script completed\n# pass 22\n# fail 0' }] }, '2026-11-06T19:00:07Z'),
+    line('response_item', { type: 'custom_tool_call', name: 'exec', call_id: 'exec-4',
+      input: 'const r=await tools.exec_command({cmd:"JAVA_HOME=/opt/jdk ./gradlew :module:test"}); text(r)' }, '2026-11-06T19:00:08Z'),
+    line('response_item', { type: 'custom_tool_call_output', call_id: 'exec-4',
+      output: [{ type: 'input_text', text: `Script completed\nOutput:\n${JSON.stringify({ exit_code: 0, output: 'BUILD SUCCESSFUL in 2s\n2 tests passed\nPRIVATE' })}` }] }, '2026-11-06T19:00:09Z'),
+  ].join('\n') + '\n');
+  try {
+    const results = transcriptResults({ transcript_path: file, session_id: 'session-a', turn_id: 'turn-a' });
+    assert.deepEqual(results.map(result => result.event.result_kind), ['testsPass', 'testsPass']);
+    assert.equal(results[0].occurredAt, '2026-11-06T19:00:03Z');
+    assert.equal(JSON.stringify(results).includes('PRIVATE'), false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('receiver counts recovered custom tool result before Stop', async () => {
+  const adapter = new Adapter({ processFinder: async () => [{
+    id: 'backend-a', pid: 100, kind: 'backend', startedAt: 0,
+  }], publish: async () => {} });
+  await adapter.refreshProcess();
+  const start = { hook_event_name: 'UserPromptSubmit', session_id: 'session-a', turn_id: 'turn-a' };
+  await adapter.receive({ parentPid: 100, occurredAt: '2026-11-06T19:00:00Z', event: start });
+  const passed = { hook_event_name: 'PostToolUse', session_id: 'session-a', turn_id: 'turn-a',
+    tool_name: 'exec', tool_use_id: 'exec-1', result_kind: 'testsPass' };
+  await adapter.receive({ parentPid: 100, occurredAt: '2026-11-06T19:00:05Z',
+    recoveredResults: [{ event: passed, occurredAt: '2026-11-06T19:00:03Z' }],
+    event: { hook_event_name: 'Stop', session_id: 'session-a', turn_id: 'turn-a' } });
+  assert.deepEqual(adapter.states.get('backend-a').snapshot()[0].results.map(result => result.kind), ['testsPass']);
+});
 
 test('in-process adapter skips heartbeat while external adapter keeps it', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cat-adapter-'));
@@ -145,6 +192,29 @@ test('hook reports test outcomes without retaining commands or output', () => {
   assert.equal(sanitizeHookEvent({ ...base, tool_name: 'functions.exec',
     tool_input: { code: 'const r=await tools.exec_command({cmd:"npm test"});text(r.output)' },
     tool_response: { output: [{ text: 'Script completed\nOutput:\n12 passed' }] } }).result_kind, 'testsPass');
+  assert.equal(sanitizeHookEvent({ ...base, tool_name: 'exec',
+    tool_input: { code: 'const r=await tools.exec_command({cmd:"node --test test/codex-state.test.js"}); text(r.output);' },
+    tool_response: { output: [{ text: 'Script completed' }, { text: '1..21\n# pass 21\n# fail 0' }] } }).result_kind, 'testsPass');
+});
+
+test('hook reports completed builds and failures without retaining output', () => {
+  const base = { hook_event_name: 'PostToolUse', session_id: 'thr_a', turn_id: 'turn_a',
+    tool_name: 'exec_command', tool_use_id: 'build_1' };
+  const result = (cmd, response) => sanitizeHookEvent({ ...base, tool_input: { cmd }, tool_response: response });
+  assert.equal(result('./gradlew :styleplus-intmod:compileJava', { exit_code: 0, output: 'BUILD SUCCESSFUL' }).result_kind, 'build');
+  assert.equal(result('JAVA_HOME=/opt/jdk ./gradlew :module:build', { exit_code: 1, output: 'BUILD FAILED' }).result_kind, 'buildFail');
+  assert.equal(result('mvn package', { exit_code: 0 }).result_kind, 'build');
+  assert.equal(result('mvn clean package', { exit_code: 0, output: 'BUILD SUCCESS' }).result_kind, 'build');
+  assert.equal(result('./mvnw -pl module package', { exit_code: 1, output: 'BUILD FAILURE' }).result_kind, 'buildFail');
+  assert.equal(result('gradle test', { exit_code: 0 }).result_kind, 'testsPass');
+  assert.equal(result('npm run build', { exit_code: 0, output: 'PRIVATE' }).result_kind, 'build');
+  assert.equal(result('npm run build', { output: 'still running' }).result_kind, undefined);
+  assert.equal(result('./gradlew :module:test', { exit_code: 0 }).result_kind, 'testsPass');
+  const wrapped = sanitizeHookEvent({ ...base, tool_name: 'exec',
+    tool_input: { code: 'const r=await tools.exec_command({cmd:"./gradlew :module:compileJava"});text(r.output)' },
+    tool_response: { output: [{ text: 'Script completed\nOutput:\nBUILD SUCCESSFUL' }] } });
+  assert.equal(wrapped.result_kind, 'build');
+  assert.equal(JSON.stringify(wrapped).includes('BUILD SUCCESSFUL'), false);
 });
 
 test('hook reports only confirmed successful push and merge commands', () => {
@@ -172,6 +242,8 @@ test('hook installation preserves other hooks and is idempotent', () => {
     assert.equal(editHooks({ ...options, action: 'install' }).changed, true);
     const installed = fs.readFileSync(target, 'utf8');
     assert.match(installed, /CAT_CODEX_RUN_DIR='\/tmp\/custom data\/codex'/);
+    assert.equal(JSON.parse(installed).hooks.PreCompact.length, 1);
+    assert.equal(JSON.parse(installed).hooks.PostCompact.length, 1);
     assert.equal(editHooks({ ...options, action: 'install' }).changed, false);
     assert.equal(fs.readFileSync(target, 'utf8'), installed);
     assert.equal(JSON.parse(installed).hooks.Stop.length, 2);
@@ -258,6 +330,7 @@ test('shared backend expires abandoned sessions and old deduplication data', asy
   const adapter = new Adapter({
     processFinder: async () => [{ id: 'backend-a', pid: 100, startedAt: 0, kind: 'backend' }],
     publish: async sessions => { sent.push(sessions); }, token: 'test', sessionTtlMs: 1000,
+    idleSessionTtlMs: 1000,
   });
   await adapter.refreshProcess();
   await adapter.receive({ parentPid: 100, occurredAt: new Date().toISOString(),
@@ -272,6 +345,51 @@ test('shared backend expires abandoned sessions and old deduplication data', asy
   assert.deepEqual(sent.at(-1), []);
   assert.equal(state.sessions.size, 0);
   assert.equal(state.ended.size, 0);
+});
+
+test('idle chat on a shared backend stays visible after ten minutes without hooks', async () => {
+  const adapter = new Adapter({
+    processFinder: async () => [{ id: 'backend-a', pid: 100, startedAt: 0, kind: 'backend' }],
+    publish: async () => {}, token: 'test',
+  });
+  await adapter.refreshProcess();
+  await adapter.receive({ parentPid: 100, occurredAt: new Date().toISOString(),
+    event: sanitizeHookEvent({ hook_event_name: 'SessionStart', session_id: 'open_chat' }) });
+  const state = adapter.states.get('backend-a');
+  state.sessions.get('codex:open_chat').lastReceivedAt = Date.now() - 10 * 60_000;
+  await adapter.refreshProcess();
+  assert.deepEqual(state.snapshot().map(session => session.id), ['codex:open_chat']);
+});
+
+test('shared backend returns a busy chat to idle when Stop is lost', async () => {
+  const adapter = new Adapter({
+    processFinder: async () => [{ id: 'backend-a', pid: 100, startedAt: 0, kind: 'backend' }],
+    publish: async () => {}, token: 'test', sessionTtlMs: 1000,
+  });
+  await adapter.refreshProcess();
+  await adapter.receive({ parentPid: 100, occurredAt: new Date().toISOString(),
+    event: sanitizeHookEvent({ hook_event_name: 'UserPromptSubmit', session_id: 'open_chat',
+      turn_id: 'turn_1' }) });
+  const state = adapter.states.get('backend-a');
+  state.sessions.get('codex:open_chat').lastReceivedAt = Date.now() - 1001;
+  await adapter.refreshProcess();
+  assert.equal(state.snapshot()[0].status, 'idle');
+  assert.equal(state.snapshot().length, 1);
+});
+
+test('live CLI also returns a busy chat to idle when Stop is lost', async () => {
+  const adapter = new Adapter({
+    processFinder: async () => [{ id: 'cli-a', pid: 100, startedAt: 0, kind: 'cli' }],
+    publish: async () => {}, token: 'test', sessionTtlMs: 1000,
+  });
+  await adapter.refreshProcess();
+  await adapter.receive({ parentPid: 100, occurredAt: new Date().toISOString(),
+    event: sanitizeHookEvent({ hook_event_name: 'UserPromptSubmit', session_id: 'open_chat',
+      turn_id: 'turn_1' }) });
+  const state = adapter.states.get('cli-a');
+  state.sessions.get('codex:open_chat').lastReceivedAt = Date.now() - 1001;
+  await adapter.refreshProcess();
+  assert.equal(state.snapshot()[0].status, 'idle');
 });
 
 test('live CLI sessions remain visible without new hook events', async () => {

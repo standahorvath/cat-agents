@@ -18,7 +18,7 @@ function fromPrep(n) {
 
 function headline(sessions) {
   const total = sessions.length;
-  const busy = sessions.filter((s) => s.status === 'busy').length;
+  const busy = sessions.filter((s) => s.status === 'busy' || s.status === 'waiting').length;
   if (!total) return 'Kancelář je prázdná';
   if (total === 1) return busy ? 'Kočka maká' : 'Kočka se fláká';
   if (!busy) return total <= 4 ? `Všechny ${total} kočky se flákají` : `Všech ${total} koček se fláká`;

@@ -4,6 +4,7 @@ import net from 'node:net';
 import { SOCKET_PATH } from './runtime-config.js';
 import { sanitizeHookEvent } from './hook-event.js';
 import { processAncestry } from './process-ancestry.js';
+import { transcriptResults } from './transcript-results.js';
 
 const occurredAt = new Date().toISOString();
 let raw = '';
@@ -17,11 +18,12 @@ process.stdin.on('end', () => {
     const source = JSON.parse(raw);
     const event = sanitizeHookEvent(source);
     if (!event) return;
-    const socket = net.createConnection(SOCKET_PATH);
-    const timer = setTimeout(() => socket.destroy(), 100);
+    const recoveredResults = source.hook_event_name === 'Stop' ? transcriptResults(source) : [];
     const parentPids = processAncestry();
+    const socket = net.createConnection(SOCKET_PATH);
+    const timer = setTimeout(() => socket.destroy(), 1000);
     socket.on('connect', () => socket.end(JSON.stringify({
-      occurredAt, parentPid: process.ppid, parentPids, event,
+      occurredAt, parentPid: process.ppid, parentPids, event, recoveredResults,
     }) + '\n'));
     socket.on('error', () => {});
     socket.on('close', () => clearTimeout(timer));
