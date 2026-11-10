@@ -112,6 +112,8 @@ export class World {
     this.onPointerMove = (e) => this.pointerMove(e);
     this.onPointerLeave = () => (this.hovered = null);
     this.onWheel = (e) => {
+      // Let panels (shop, cat card, jukebox…) scroll natively instead of zooming the office.
+      if (e.target.closest('aside, .panel')) return;
       e.preventDefault();
       this.zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12);
     };
