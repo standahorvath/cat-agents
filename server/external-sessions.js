@@ -21,7 +21,7 @@ export function validateCodexSnapshot(body) {
         input.source !== 'codex' || !text(input.name) || !text(input.cwd, 4096) ||
         !text(input.project) || !['busy', 'waiting', 'idle'].includes(input.status) ||
         !timestamp(input.statusSince) || !timestamp(input.startedAt) ||
-        (input.results !== undefined && (!Array.isArray(input.results) || input.results.length > 6)) ||
+        (input.results !== undefined && (!Array.isArray(input.results) || input.results.length > 32)) ||
         (input.compacts !== undefined && (!Array.isArray(input.compacts) || input.compacts.length > 3)) ||
         !Array.isArray(input.subagents) || input.subagents.length !== 0) {
       return { ok: false, error: 'Invalid session' };
@@ -32,7 +32,7 @@ export function validateCodexSnapshot(body) {
     for (const item of input.results ?? []) {
       if (!plain(item) || !keysOnly(item, ['id', 'kind', 'ts']) ||
           !text(item.id, 300) || !item.id.startsWith(`${input.id}:`) || resultIds.has(item.id) ||
-          !['commit', 'push', 'merge', 'testsPass', 'testsFail'].includes(item.kind) || !timestamp(item.ts)) {
+          !['commit', 'push', 'merge', 'testsPass', 'testsFail', 'build', 'buildFail'].includes(item.kind) || !timestamp(item.ts)) {
         return { ok: false, error: 'Invalid result' };
       }
       resultIds.add(item.id);

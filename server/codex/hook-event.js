@@ -1,6 +1,6 @@
 import { fingerprintToolInput } from './state.js';
 import { contextFromTranscript } from './context.js';
-import { TEST_COMMAND, TEST_FAILED } from '../test-patterns.js';
+import { TEST_COMMAND, TEST_FAILED, BUILD_COMMAND, BUILD_FAILED } from '../test-patterns.js';
 
 
 function responseText(value) {
@@ -25,6 +25,26 @@ function testResult(source) {
   if (/\b(?:Process exited with code|exit code:)\s*[1-9]\d*\b/i.test(output) || TEST_FAILED.test(output)) return 'testsFail';
   if (/\b(?:Process exited with code|exit code:)\s*0\b/i.test(output) ||
       /\bScript completed\b/.test(output)) return 'testsPass';
+  return null;
+}
+
+function buildResult(source) {
+  if (source.hook_event_name !== 'PostToolUse') return null;
+  const direct = source.tool_name === 'Bash' || source.tool_name === 'exec_command';
+  const wrapped = source.tool_name === 'exec' || source.tool_name === 'functions.exec';
+  if (!direct && !wrapped) return null;
+  const command = direct ? source.tool_input?.command ?? source.tool_input?.cmd : source.tool_input?.code;
+  if (typeof command !== 'string' || TEST_COMMAND.test(command) ||
+      !BUILD_COMMAND.test(command) || /\bgit (commit|push)\b/.test(command)) return null;
+  const response = source.tool_response;
+  if (!response) return null;
+  const output = responseText(response);
+  const code = typeof response === 'object' ? response.exit_code ?? response.exitCode : null;
+  if (Number.isInteger(code)) return code === 0 && !BUILD_FAILED.test(output) ? 'build' : 'buildFail';
+  if (/\b(?:Process exited with code|exit code:|exit_code["']?\s*:)\s*[1-9]\d*\b/i.test(output) ||
+      BUILD_FAILED.test(output)) return 'buildFail';
+  if (/\b(?:Process exited with code|exit code:|exit_code["']?\s*:)\s*0\b/i.test(output) ||
+      /\bBUILD SUCCESS(?:FUL)?\b/.test(output) || /\bScript completed\b/.test(output)) return 'build';
   return null;
 }
 
@@ -90,7 +110,7 @@ export function sanitizeHookEvent(source) {
   if (inputKey) event.tool_input_key = inputKey;
   if (successfulCommit(source)) event.result_kind = 'commit';
   else {
-    const result = testResult(source) ?? successfulGitOperation(source);
+    const result = testResult(source) ?? buildResult(source) ?? successfulGitOperation(source);
     if (result) event.result_kind = result;
   }
   const context = contextFromTranscript(source.transcript_path);

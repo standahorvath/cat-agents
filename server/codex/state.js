@@ -24,6 +24,14 @@ function inputKey(event) {
   return crypto.createHash('sha256').update(event.tool_name + '\0' + stableJson(event.tool_input)).digest('hex');
 }
 
+function matchesWaitingTool(session, event) {
+  if (event.tool_use_id && session.activeToolUseId &&
+      event.tool_use_id === session.activeToolUseId) return true;
+  const key = inputKey(event);
+  if (session.waitingInputKey) return session.waitingInputKey === key;
+  return Boolean(session.waitingToolName && session.waitingToolName === event.tool_name);
+}
+
 function activityFor(event, at) {
   const name = event.tool_name || 'Tool';
   return { name, category: name === 'Bash' ? 'shell' : 'tool', detail: name, ts: at };
@@ -34,7 +42,7 @@ function positionAfter(at, priority, session) {
 }
 
 function recordResult(session, event, at) {
-  if (!['commit', 'push', 'merge', 'testsPass', 'testsFail'].includes(event.result_kind) ||
+  if (!['commit', 'push', 'merge', 'testsPass', 'testsFail', 'build', 'buildFail'].includes(event.result_kind) ||
       !['Bash', 'exec_command', 'exec', 'functions.exec'].includes(event.tool_name) ||
       !event.tool_use_id) return false;
   const id = `${session.id}:${event.tool_use_id}`;
@@ -42,7 +50,7 @@ function recordResult(session, event, at) {
   session.seenResultIds.add(id);
   if (session.seenResultIds.size > 512) session.seenResultIds.delete(session.seenResultIds.values().next().value);
   session.results.push({ id, kind: event.result_kind, ts: at });
-  if (session.results.length > 6) session.results.shift();
+  if (session.results.length > 32) session.results.shift();
   return true;
 }
 
@@ -56,6 +64,22 @@ function updateContext(session, context, at) {
     fill: Math.min(1, context.tokens / context.window),
   };
   session.contextAt = at;
+  return true;
+}
+
+function finishCompact(session, context, at) {
+  const pending = session.pendingCompact;
+  if (!pending || pending.postAt === null || at < pending.postAt ||
+      pending.before === null || !Number.isSafeInteger(context?.tokens) ||
+      !Number.isSafeInteger(context?.window) || context.window <= 0 ||
+      context.tokens < 0 || context.tokens >= pending.before) return false;
+  const id = `${session.id}:compact:${pending.postAt}`;
+  if (!session.compacts.some(compact => compact.id === id)) {
+    session.compacts.push({ id, ts: pending.postAt, before: pending.before,
+      after: context.tokens, trigger: 'auto' });
+    if (session.compacts.length > 3) session.compacts.shift();
+  }
+  session.pendingCompact = null;
   return true;
 }
 
@@ -80,14 +104,21 @@ export class SessionStateMachine {
     return true;
   }
 
-  prune(now, ttlMs, expireSessions = true) {
+  prune(now, ttlMs, expireSessions = true, idleTtlMs = ttlMs) {
     let changed = false;
-    if (expireSessions) {
-      for (const [id, session] of this.sessions) {
-        if (now - session.lastReceivedAt > ttlMs) {
-          this.sessions.delete(id);
-          changed = true;
-        }
+    for (const [id, session] of this.sessions) {
+      if (session.status === 'busy' && now - session.lastReceivedAt > ttlMs) {
+        // A lost Stop hook must not leave a cat working forever.
+        session.status = 'idle';
+        session.statusSince = now;
+        session.activity = null;
+        session.activeToolUseId = null;
+        changed = true;
+      }
+      if (expireSessions && now - session.lastReceivedAt >
+          (session.status === 'idle' ? idleTtlMs : ttlMs)) {
+        this.sessions.delete(id);
+        changed = true;
       }
     }
     for (const [id, receivedAt] of this.endedReceived) {
@@ -105,7 +136,8 @@ export class SessionStateMachine {
     const at = Date.parse(occurredAt);
     if (!Number.isFinite(at)) return false;
     const kind = event.hook_event_name;
-    if (kind !== 'SessionStart' && kind !== 'SessionEnd' && !TURN_EVENTS.has(kind)) return false;
+    if (kind !== 'SessionStart' && kind !== 'SessionEnd' &&
+        kind !== 'PreCompact' && kind !== 'PostCompact' && !TURN_EVENTS.has(kind)) return false;
     const id = `codex:${event.session_id}`;
     let session = this.sessions.get(id);
     let created = false;
@@ -159,10 +191,25 @@ export class SessionStateMachine {
         context: null,
         contextAt: -Infinity,
         compacts: [],
+        pendingCompact: null,
       };
       this.sessions.set(id, session);
     }
     session.lastReceivedAt = Date.now();
+
+    if (kind === 'PreCompact') {
+      if (at < session.contextAt || (session.pendingCompact && at <= session.pendingCompact.preAt)) return created;
+      session.pendingCompact = { preAt: at, before: session.context?.tokens ?? null, postAt: null };
+      return created;
+    }
+    if (kind === 'PostCompact') {
+      const pending = session.pendingCompact;
+      if (!pending || at < pending.preAt || pending.postAt !== null) return created;
+      pending.postAt = at;
+      const updated = updateContext(session, event.context, at);
+      const context = session.contextAt >= at ? session.context : event.context;
+      return finishCompact(session, context, Math.max(at, session.contextAt)) || updated || created;
+    }
 
     let enriched = false;
     if (!session.cwd && typeof event.cwd === 'string' && event.cwd) {
@@ -173,9 +220,10 @@ export class SessionStateMachine {
     }
     if (kind === 'SessionStart') {
       let compacted = false;
-      if (event.source === 'compact' && session.context && event.context &&
+      if (event.source === 'compact' && !session.pendingCompact && session.context && event.context &&
           at >= session.contextAt && Number.isSafeInteger(event.context.tokens) &&
-          event.context.tokens >= 0 && Number.isSafeInteger(event.context.window) &&
+          event.context.tokens >= 0 && event.context.tokens < session.context.tokens &&
+          Number.isSafeInteger(event.context.window) &&
           event.context.window > 0) {
         const id = `${session.id}:compact:${at}`;
         if (!session.compacts.some(compact => compact.id === id)) {
@@ -185,7 +233,8 @@ export class SessionStateMachine {
           compacted = true;
         }
       }
-      return updateContext(session, event.context, at) || compacted || created || enriched;
+      const updated = updateContext(session, event.context, at);
+      return finishCompact(session, event.context, at) || updated || compacted || created || enriched;
     }
 
     if (session.turnId !== event.turn_id) {
@@ -215,14 +264,8 @@ export class SessionStateMachine {
     if (kind === 'UserPromptSubmit' && session.lastAt !== -Infinity) return false;
 
     if (kind === 'PostToolUse') {
-      const key = inputKey(event);
       if (session.status === 'waiting') {
-        const matches = session.waitingInputKey
-          ? session.waitingInputKey === key
-          : session.activeToolUseId && event.tool_use_id
-            ? session.activeToolUseId === event.tool_use_id
-            : session.waitingToolName === event.tool_name;
-        if (!matches) return resultAdded;
+        if (!matchesWaitingTool(session, event)) return resultAdded;
       } else if (session.activeToolUseId && event.tool_use_id &&
                  session.activeToolUseId !== event.tool_use_id) {
         return resultAdded;
@@ -232,6 +275,7 @@ export class SessionStateMachine {
     session.lastAt = at;
     session.lastPriority = priority;
     updateContext(session, event.context, at);
+    finishCompact(session, event.context, at);
 
     if (kind === 'UserPromptSubmit') {
       if (session.status !== 'busy' || session.activity !== null) {
@@ -244,8 +288,7 @@ export class SessionStateMachine {
     if (kind === 'PreToolUse') {
       // PermissionRequest may arrive before PreToolUse for the same call.
       const startsApprovedTool = session.status === 'waiting' && at > session.statusSince &&
-        (session.waitingInputKey ? session.waitingInputKey === inputKey(event)
-          : session.waitingToolName === event.tool_name);
+        matchesWaitingTool(session, event);
       if (session.status !== 'waiting' || startsApprovedTool) {
         if (session.status !== 'busy') session.statusSince = at;
         session.status = 'busy';
@@ -262,6 +305,7 @@ export class SessionStateMachine {
       session.activity = activityFor(event, at);
       session.waitingInputKey = inputKey(event);
       session.waitingToolName = event.tool_name || null;
+      if (event.tool_use_id) session.activeToolUseId = event.tool_use_id;
       return true;
     }
     if (kind === 'PostToolUse') {
